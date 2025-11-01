@@ -26,7 +26,7 @@ The tutorial is organized into **5 progressive steps**, each on its own Git bran
 | Step | Topic | Branch | Status |
 |------|-------|--------|--------|
 | 1 | AWS AgentRuntime Deployment | `step-01-runtime-deployment` | ✅ Available |
-| 2 | Gateway & ServiceNow Integration | `step-02-gateway-ticketing` | 🚧 Coming Soon |
+| 2 | Gateway & ServiceNow Integration | `step-02-gateway-servicenow` | ✅ Available |
 | 3 | Knowledge Base Integration | `step-03-knowledge-base` | 🚧 Coming Soon |
 | 4 | Observability & Monitoring | `step-04-observability` | 🚧 Coming Soon |
 | 5 | Identity & Authorization | `step-05-identity` | 🚧 Coming Soon |
@@ -136,9 +136,16 @@ python scripts/navigate.py --list
 
 **Read:** [English](docs/en/article-01-runtime.md) | [Français](docs/fr/article-01-runtime.md)
 
-#### 🚧 Article 2: Gateway Integration for Ticket Management (Coming Soon)
+#### ✅ Article 2: Gateway Integration for Ticket Management
 
-Integration with AWS AgentCore Gateway and ServiceNow
+**What you'll learn:**
+- Deploy API Gateway + Lambda webhook infrastructure
+- Implement real ServiceNow REST API integration
+- Configure ServiceNow Business Rules
+- Create end-to-end ticket flow with real updates
+
+**Read:** [English](docs/en/article-02-gateway.md) | [Français](docs/fr/article-02-gateway.md)
+**Branch:** `step-02-gateway-servicenow`
 
 #### 🚧 Article 3: Knowledge Base and Intelligent Analysis (Coming Soon)
 
@@ -202,7 +209,7 @@ Le tutoriel est organisé en **5 étapes progressives**, chacune sur sa propre b
 | Étape | Sujet | Branche | Statut |
 |-------|-------|---------|--------|
 | 1 | Déploiement AWS AgentRuntime | `step-01-runtime-deployment` | ✅ Disponible |
-| 2 | Gateway & Intégration ServiceNow | `step-02-gateway-ticketing` | 🚧 Bientôt |
+| 2 | Gateway & Intégration ServiceNow | `step-02-gateway-servicenow` | ✅ Disponible |
 | 3 | Intégration Base de Connaissances | `step-03-knowledge-base` | 🚧 Bientôt |
 | 4 | Observabilité & Monitoring | `step-04-observability` | 🚧 Bientôt |
 | 5 | Identité & Autorisation | `step-05-identity` | 🚧 Bientôt |
@@ -312,9 +319,16 @@ python scripts/navigate.py --list --lang fr
 
 **Lire :** [Français](docs/fr/article-01-runtime.md) | [English](docs/en/article-01-runtime.md)
 
-#### 🚧 Article 2 : Intégration du Gateway pour la gestion des tickets (Bientôt)
+#### ✅ Article 2 : Intégration du Gateway pour la gestion des tickets
 
-Intégration avec AWS AgentCore Gateway et ServiceNow
+**Ce que vous apprendrez :**
+- Déployer l'infrastructure webhook API Gateway + Lambda
+- Implémenter l'intégration réelle de l'API REST ServiceNow
+- Configurer les Business Rules ServiceNow
+- Créer un flux de tickets de bout en bout avec mises à jour réelles
+
+**Lire :** [Français](docs/fr/article-02-gateway.md) | [English](docs/en/article-02-gateway.md)
+**Branche :** `step-02-gateway-servicenow`
 
 #### 🚧 Article 3 : Base de Connaissances et Analyse Intelligente (Bientôt)
 
