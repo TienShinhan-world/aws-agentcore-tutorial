@@ -1,0 +1,44 @@
+default_agent: agent_level_one_triage
+agents:
+  agent_level_one_triage:
+    name: agent_level_one_triage
+    entrypoint: src/agent/agent_level_one_triage.py
+    platform: linux/arm64
+    container_runtime: docker
+    source_path: null
+    aws:
+      execution_role: arn:aws:iam::AWS_ACCOUNT_NUMBER:role/AmazonBedrockAgentCoreSDKRuntime-eu-central-1-fd7b98a71f
+      execution_role_auto_create: false
+      account: 'AWS_ACCOUNT_NUMBER'
+      region: eu-central-1
+      ecr_repository: AWS_ACCOUNT_NUMBER.dkr.ecr.eu-central-1.amazonaws.com/bedrock-agentcore-agent_level_one_triage
+      ecr_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: HTTP
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: null
+        max_lifetime: null
+    bedrock_agentcore:
+      agent_id: agent_level_one_triage-9rGFpG5ZFx
+      agent_arn: arn:aws:bedrock-agentcore:eu-central-1:AWS_ACCOUNT_NUMBER:runtime/agent_level_one_triage-9rGFpG5ZFx
+      agent_session_id: e7540cec-dab1-4ed2-9b2c-d7ba256cc3cf
+    codebuild:
+      project_name: bedrock-agentcore-agent_level_one_triage-builder
+      execution_role: arn:aws:iam::AWS_ACCOUNT_NUMBER:role/AmazonBedrockAgentCoreSDKCodeBuild-eu-central-1-fd7b98a71f
+      source_bucket: bedrock-agentcore-codebuild-sources-AWS_ACCOUNT_NUMBER-eu-central-1
+    memory:
+      mode: STM_ONLY
+      memory_id: agent_level_one_triage_mem-VMqKNm5u9M
+      memory_arn: arn:aws:bedrock-agentcore:eu-central-1:AWS_ACCOUNT_NUMBER:memory/agent_level_one_triage_mem-VMqKNm5u9M
+      memory_name: agent_level_one_triage_mem
+      event_expiry_days: 30
+      first_invoke_memory_check_done: true
+      was_created_by_toolkit: true
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null
