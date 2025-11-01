@@ -194,14 +194,14 @@ Voici la structure de notre projet :
 aws-agentcore-tutorial/
 ├── src/
 │   └── agent/
-│       └── my_agent.py          # Notre agent principal
+│       └── agent_level_one_triage.py          # Notre agent principal
 ├── requirements.txt
 └── .bedrock_agentcore.yaml      # Configuration (généré automatiquement)
 ```
 
 ### Code de l'agent
 
-Ouvrons `src/agent/my_agent.py` pour comprendre la structure.
+Ouvrons `src/agent/agent_level_one_triage.py` pour comprendre la structure.
 
 #### Import des modules
 
@@ -505,7 +505,7 @@ Maintenant que l'agent fonctionne localement, déployons-le sur AWS avec AgentCo
 Arrêtez le serveur local (Ctrl+C) et exécutez :
 
 ```bash
-agentcore configure --entrypoint src/agent/my_agent.py
+agentcore configure --entrypoint src/agent/agent_level_one_triage.py
 ```
 
 **Questions posées par le CLI :**
@@ -522,11 +522,11 @@ agentcore configure --entrypoint src/agent/my_agent.py
 Cette commande crée un fichier `.bedrock_agentcore.yaml` avec la configuration :
 
 ```yaml
-default_agent: my_agent
+default_agent: agent_level_one_triage
 agents:
-  my_agent:
-    name: my_agent
-    entrypoint: src/agent/my_agent.py
+  agent_level_one_triage:
+    name: agent_level_one_triage
+    entrypoint: src/agent/agent_level_one_triage.py
     platform: linux/arm64
     container_runtime: docker
     aws:
@@ -602,7 +602,7 @@ agentcore status
 
 Devrait afficher :
 ```
-Agent: my_agent
+Agent: agent_level_one_triage
 Status: ACTIVE
 Endpoint: https://xxxxxx.execute-api.eu-central-1.amazonaws.com/prod/invoke
 Region: eu-central-1
