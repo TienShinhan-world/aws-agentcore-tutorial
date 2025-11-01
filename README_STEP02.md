@@ -114,7 +114,7 @@ AWS CDK stack deploying:
 
 ## Updated Agent
 
-The agent (`src/agent/my_agent.py`) now:
+The agent (`src/agent/agent_level_one_triage.py`) now:
 - Uses real ServiceNow client for ticket updates
 - Handles ServiceNowError exceptions
 - Logs all operations to CloudWatch
