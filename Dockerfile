@@ -30,4 +30,4 @@ EXPOSE 9000
 COPY . .
 
 # Run the agent with OpenTelemetry instrumentation
-CMD ["opentelemetry-instrument", "python", "src/agent/my_agent.py"]
+CMD ["opentelemetry-instrument", "python", "src/agent/agent_level_one_triage.py"]

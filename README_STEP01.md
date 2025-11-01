@@ -58,7 +58,7 @@ agentcore invoke --local '{
 
 ```bash
 # Configure for deployment
-agentcore configure --entrypoint src/agent/my_agent.py
+agentcore configure --entrypoint src/agent/agent_level_one_triage.py
 
 # Answer the prompts:
 # - Auto-create IAM execution role? Yes
@@ -74,7 +74,7 @@ agentcore invoke '{"prompt": "Analyze ticket INC0001234"}'
 
 ## Agent Structure
 
-The agent (`src/agent/my_agent.py`) includes:
+The agent (`src/agent/agent_level_one_triage.py`) includes:
 
 ### Three Custom Tools
 
