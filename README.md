@@ -41,20 +41,20 @@ git checkout step-01-runtime-deployment
 ---
 
 #### Article 2 : Intégration du Gateway pour la gestion des tickets
-**Branch:** `step-02-gateway-ticketing`
+**Branch:** `step-02-gateway-servicenow` ✅ **Disponible**
 
-Intégrez AWS AgentCore Gateway pour recevoir et traiter les tickets ServiceNow.
+Déployez l'infrastructure webhook complète avec API Gateway + Lambda et intégrez votre agent avec ServiceNow.
 
 **Ce que vous apprendrez :**
-- Configuration d'AWS AgentCore Gateway
-- Intégration avec ServiceNow
-- Gestion du flux de tickets
-- Webhooks et événements
+- Déployer API Gateway + Lambda webhook
+- Implémenter l'API REST ServiceNow réelle
+- Configurer les Business Rules ServiceNow
+- Créer un flux de tickets de bout en bout
 
 **📄 Lire l'article :** [docs/fr/article-02-gateway.md](docs/fr/article-02-gateway.md)
 
 ```bash
-git checkout step-02-gateway-ticketing
+git checkout step-02-gateway-servicenow
 ```
 
 ---
@@ -212,20 +212,20 @@ git checkout step-01-runtime-deployment
 ---
 
 #### Article 2: Gateway Integration for Ticket Management
-**Branch:** `step-02-gateway-ticketing`
+**Branch:** `step-02-gateway-servicenow` ✅ **Available**
 
-Integrate AWS AgentCore Gateway to receive and process ServiceNow tickets.
+Deploy the complete webhook infrastructure with API Gateway + Lambda and integrate your agent with ServiceNow.
 
 **What you'll learn:**
-- AWS AgentCore Gateway configuration
-- ServiceNow integration
-- Ticket flow management
-- Webhooks and events
+- Deploy API Gateway + Lambda webhook
+- Implement real ServiceNow REST API
+- Configure ServiceNow Business Rules
+- Create end-to-end ticket flow
 
 **📄 Read the article:** [docs/en/article-02-gateway.md](docs/en/article-02-gateway.md)
 
 ```bash
-git checkout step-02-gateway-ticketing
+git checkout step-02-gateway-servicenow
 ```
 
 ---
