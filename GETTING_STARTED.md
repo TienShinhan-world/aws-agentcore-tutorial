@@ -87,7 +87,7 @@ aws-agentcore-tutorial/
 │       └── ...
 ├── src/
 │   ├── agent/                 # Agent code
-│   │   └── my_agent.py
+│   │   └── agent_level_one_triage.py
 │   ├── tools/                 # Custom tools
 │   ├── servicenow/            # ServiceNow integration
 │   └── utils/                 # Utilities
@@ -270,7 +270,7 @@ aws-agentcore-tutorial/
 │       └── ...
 ├── src/
 │   ├── agent/                 # Code de l'agent
-│   │   └── my_agent.py
+│   │   └── agent_level_one_triage.py
 │   ├── tools/                 # Outils personnalisés
 │   ├── servicenow/            # Intégration ServiceNow
 │   └── utils/                 # Utilitaires

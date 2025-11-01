@@ -34,16 +34,16 @@ This project uses the Bedrock AgentCore CLI for deployment:
 
 ```bash
 # Deploy agent to AWS (uses .bedrock_agentcore.yaml config)
-bedrock-agentcore deploy my_agent
+bedrock-agentcore deploy agent_level_one_triage
 
 # Invoke deployed agent
-bedrock-agentcore invoke my_agent --prompt "Your prompt here"
+bedrock-agentcore invoke agent_level_one_triage --prompt "Your prompt here"
 
 # Get deployment status
-bedrock-agentcore status my_agent
+bedrock-agentcore status agent_level_one_triage
 
 # View logs
-bedrock-agentcore logs my_agent
+bedrock-agentcore logs agent_level_one_triage
 ```
 
 ### Webhook Infrastructure Deployment
@@ -116,7 +116,7 @@ The system uses a **webhook-driven architecture** where ServiceNow initiates con
 5. **Agent** analyzes ticket → searches knowledge base → calls ServiceNow API
 6. **ServiceNow API** receives update with agent's resolution notes
 
-### Agent System (src/agent/my_agent.py)
+### Agent System (src/agent/agent_level_one_triage.py)
 
 The core agent uses the **Strands** framework with AWS Bedrock AgentCore integration:
 
@@ -164,8 +164,8 @@ def tool_name(param: str) -> str:
 
 The `.bedrock_agentcore.yaml` file controls deployment behavior:
 
-- `default_agent`: Specifies which agent to deploy by default
-- `entrypoint`: Path to agent Python module (e.g., `src/agent/my_agent.py`)
+- `default_agent`: Specifies which agent to deploy by default (currently `agent_level_one_triage`)
+- `entrypoint`: Path to agent Python module (e.g., `src/agent/agent_level_one_triage.py`)
 - `platform`: Container platform architecture (`linux/arm64`)
 - `aws.region`: Deployment region (currently `eu-central-1`)
 - `aws.account`: AWS account ID for deployment

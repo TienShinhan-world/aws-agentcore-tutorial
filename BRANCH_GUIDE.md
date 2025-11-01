@@ -79,7 +79,7 @@ git checkout main
 #### `step-01-runtime-deployment`
 
 **Files unique to or different from Step 2:**
-- `src/agent/my_agent.py` - Simplified (no ServiceNow imports)
+- `src/agent/agent_level_one_triage.py` - Simplified (no ServiceNow imports)
 - `requirements.txt` - 4 dependencies only
 - `Dockerfile` - Simplified CMD
 - `README_STEP01.md` - Step 1 specific guide
@@ -98,7 +98,7 @@ git checkout main
 - `infrastructure/cdk/` - Complete CDK stack
 - `scripts/test_webhook.sh` - Webhook testing
 - `README_STEP02.md` - Step 2 specific guide
-- Updated `src/agent/my_agent.py` with real API integration
+- Updated `src/agent/agent_level_one_triage.py` with real API integration
 
 #### `main`
 
@@ -173,7 +173,7 @@ To see what changed between steps:
 git diff step-01-runtime-deployment..step-02-gateway-servicenow
 
 # Compare specific file
-git diff step-01-runtime-deployment..step-02-gateway-servicenow -- src/agent/my_agent.py
+git diff step-01-runtime-deployment..step-02-gateway-servicenow -- src/agent/agent_level_one_triage.py
 
 # List files that differ
 git diff --name-only step-01-runtime-deployment..step-02-gateway-servicenow
@@ -264,7 +264,7 @@ git checkout main
 #### `step-01-runtime-deployment`
 
 **Fichiers uniques ou différents de l'Étape 2 :**
-- `src/agent/my_agent.py` - Simplifié (pas d'imports ServiceNow)
+- `src/agent/agent_level_one_triage.py` - Simplifié (pas d'imports ServiceNow)
 - `requirements.txt` - 4 dépendances seulement
 - `Dockerfile` - CMD simplifié
 - `README_STEP01.md` - Guide spécifique à l'Étape 1
@@ -283,7 +283,7 @@ git checkout main
 - `infrastructure/cdk/` - Stack CDK complète
 - `scripts/test_webhook.sh` - Tests webhook
 - `README_STEP02.md` - Guide spécifique à l'Étape 2
-- `src/agent/my_agent.py` mis à jour avec intégration API réelle
+- `src/agent/agent_level_one_triage.py` mis à jour avec intégration API réelle
 
 #### `main`
 
@@ -358,7 +358,7 @@ Pour voir ce qui a changé entre les étapes :
 git diff step-01-runtime-deployment..step-02-gateway-servicenow
 
 # Comparer un fichier spécifique
-git diff step-01-runtime-deployment..step-02-gateway-servicenow -- src/agent/my_agent.py
+git diff step-01-runtime-deployment..step-02-gateway-servicenow -- src/agent/agent_level_one_triage.py
 
 # Lister les fichiers qui diffèrent
 git diff --name-only step-01-runtime-deployment..step-02-gateway-servicenow
