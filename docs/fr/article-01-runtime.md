@@ -182,9 +182,45 @@ agentcore --help
 
 Vous devriez voir l'aide du CLI avec les commandes disponibles.
 
-### 5. Indiquer votre AWS Account
+### 5. Configurer votre compte AWS
 
-Il faut que vous modifiez dans le fichier `.bedrock_agentcore.yaml` la valeur AWS_ACCOUNT_NUMBER avec votre numéro de compte AWS.
+Le fichier de configuration `.bedrock_agentcore.yaml` contient des informations spécifiques à votre compte AWS. Pour des raisons de sécurité, ce fichier
+  n'est pas inclus dans le repository Git.
+
+**Étapes de configuration :**
+
+1. **Copier le template de configuration**
+    ```bash
+    cp .bedrock_agentcore.yaml.template .bedrock_agentcore.yaml
+    ```
+
+2. Récupérer votre numéro de compte AWS
+```bash
+aws sts get-caller-identity --query Account --output text
+```
+
+2. Ou via la console AWS : cliquez sur votre nom d'utilisateur en haut à droite → le numéro de compte s'affiche.
+
+3. Modifier le fichier de configuration
+
+4. Ouvrez .bedrock_agentcore.yaml et remplacez toutes les occurrences de AWS_ACCOUNT_NUMBER par votre numéro de compte AWS :
+```bash
+# Avant
+account: 'AWS_ACCOUNT_NUMBER'
+ecr_repository: AWS_ACCOUNT_NUMBER.dkr.ecr.eu-central-1.amazonaws.com/...
+
+# Après (exemple avec le compte 123456789012)
+account: '123456789012'
+ecr_repository: 123456789012.dkr.ecr.eu-central-1.amazonaws.com/...
+```
+
+5. Vérifier la configuration
+grep "AWS_ACCOUNT_NUMBER" .bedrock_agentcore.yaml
+
+6. Cette commande ne devrait rien retourner. Si elle affiche des résultats, vous n'avez pas remplacé toutes les occurrences.
+
+Note : Le fichier .bedrock_agentcore.yaml est ignoré par Git (via .gitignore) pour protéger vos informations sensibles. Ne commitez jamais ce fichier
+dans votre repository.
 
 
 ---
