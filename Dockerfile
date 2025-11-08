@@ -44,4 +44,4 @@ COPY . .
 
 # Use the full module path
 
-CMD ["opentelemetry-instrument", "python", "-m", "agent_level_one_triage"]
+CMD ["opentelemetry-instrument", "python", "-m", "src.agent.agent_level_one_triage"]
