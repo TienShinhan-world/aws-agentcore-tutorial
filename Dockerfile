@@ -42,6 +42,6 @@ EXPOSE 8080
 # Copy entire project (respecting .dockerignore)
 COPY . .
 
-# Use the full module path
-
-CMD ["opentelemetry-instrument", "python", "-m", "agent_level_one_triage"]
+# Use the full module path (src.agent.agent_level_one_triage)
+# This ensures Python can locate the agent module correctly when running in the container
+CMD ["opentelemetry-instrument", "python", "-m", "src.agent.agent_level_one_triage"]
