@@ -1,2 +1,0 @@
-# Requirements for ServiceNow webhook Lambda function
-requests>=2.31.0
