@@ -643,19 +643,22 @@ L'agent va :
 
 AgentCore Runtime intègre automatiquement avec CloudWatch Logs.
 
-**Via le CLI :**
+**Via AWS CLI :**
 ```bash
-# Voir les derniers logs
-agentcore logs --tail 50
+# Trouver le nom du log group
+agentcore status
 
-# Suivre les logs en temps réel
-agentcore logs --follow
+# Voir les derniers logs (remplacez LOG_GROUP_NAME par le nom affiché dans status)
+aws logs tail /aws/lambda/bedrock-agentcore-agent_level_one_triage --follow
+
+# Ou lister tous les log groups pour trouver celui de votre agent
+aws logs describe-log-groups --log-group-name-prefix /aws/lambda/bedrock-agentcore
 ```
 
 **Via la console AWS :**
 1. Ouvrez CloudWatch dans la console AWS
 2. Allez dans **Logs > Log groups**
-3. Cherchez le log group de votre agent
+3. Cherchez le log group : `/aws/lambda/bedrock-agentcore-agent_level_one_triage`
 4. Explorez les logs d'exécution
 
 ### Traces X-Ray (si configuré)
