@@ -1,7 +1,7 @@
 # Article 1 : Déployer un agent de support avec AWS AgentCore Runtime
 
 > **Série : Agent de Support Backoffice avec AWS AgentCore**
-> **Étape 1 sur 5** | [English version](../en/article-01-runtime.md)
+> **Étape 1**
 
 ## Table des matières
 
@@ -182,6 +182,47 @@ agentcore --help
 
 Vous devriez voir l'aide du CLI avec les commandes disponibles.
 
+### 5. Configurer votre compte AWS
+
+Le fichier de configuration `.bedrock_agentcore.yaml` contient des informations spécifiques à votre compte AWS. Pour des raisons de sécurité, ce fichier
+  n'est pas inclus dans le repository Git.
+
+**Étapes de configuration :**
+
+1. **Copier le template de configuration**
+    ```bash
+    cp .bedrock_agentcore.yaml.template .bedrock_agentcore.yaml
+    ```
+
+2. Récupérer votre numéro de compte AWS
+```bash
+aws sts get-caller-identity --query Account --output text
+```
+
+2. Ou via la console AWS : cliquez sur votre nom d'utilisateur en haut à droite → le numéro de compte s'affiche.
+
+3. Modifier le fichier de configuration
+
+4. Ouvrez .bedrock_agentcore.yaml et remplacez toutes les occurrences de AWS_ACCOUNT_NUMBER par votre numéro de compte AWS :
+```bash
+# Avant
+account: 'AWS_ACCOUNT_NUMBER'
+ecr_repository: AWS_ACCOUNT_NUMBER.dkr.ecr.eu-central-1.amazonaws.com/...
+
+# Après (exemple avec le compte 123456789012)
+account: '123456789012'
+ecr_repository: 123456789012.dkr.ecr.eu-central-1.amazonaws.com/...
+```
+
+5. Vérifier la configuration
+grep "AWS_ACCOUNT_NUMBER" .bedrock_agentcore.yaml
+
+6. Cette commande ne devrait rien retourner. Si elle affiche des résultats, vous n'avez pas remplacé toutes les occurrences.
+
+Note : Le fichier .bedrock_agentcore.yaml est ignoré par Git (via .gitignore) pour protéger vos informations sensibles. Ne commitez jamais ce fichier
+dans votre repository.
+
+
 ---
 
 ## Création de l'agent
@@ -194,14 +235,14 @@ Voici la structure de notre projet :
 aws-agentcore-tutorial/
 ├── src/
 │   └── agent/
-│       └── my_agent.py          # Notre agent principal
+│       └── agent_level_one_triage.py          # Notre agent principal
 ├── requirements.txt
 └── .bedrock_agentcore.yaml      # Configuration (généré automatiquement)
 ```
 
 ### Code de l'agent
 
-Ouvrons `src/agent/my_agent.py` pour comprendre la structure.
+Ouvrons `src/agent/agent_level_one_triage.py` pour comprendre la structure.
 
 #### Import des modules
 
@@ -428,20 +469,6 @@ Avant de déployer sur AWS, testons l'agent localement.
 agentcore launch --local
 ```
 
-**Ce que fait cette commande :**
-- Lance l'agent dans un serveur local
-- Écoute sur `http://localhost:8080`
-- Permet de tester l'agent sans déploiement AWS
-- Utilise vos credentials AWS locaux pour accéder à Bedrock
-
-Vous devriez voir :
-```
-INFO:     Started server process
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8080
-```
-
 ### 2. Tester avec le CLI AgentCore
 
 Ouvrez un nouveau terminal (gardez le serveur qui tourne) et testez :
@@ -505,7 +532,7 @@ Maintenant que l'agent fonctionne localement, déployons-le sur AWS avec AgentCo
 Arrêtez le serveur local (Ctrl+C) et exécutez :
 
 ```bash
-agentcore configure --entrypoint src/agent/my_agent.py
+agentcore configure --entrypoint src/agent/agent_level_one_triage.py
 ```
 
 **Questions posées par le CLI :**
@@ -522,11 +549,11 @@ agentcore configure --entrypoint src/agent/my_agent.py
 Cette commande crée un fichier `.bedrock_agentcore.yaml` avec la configuration :
 
 ```yaml
-default_agent: my_agent
+default_agent: agent_level_one_triage
 agents:
-  my_agent:
-    name: my_agent
-    entrypoint: src/agent/my_agent.py
+  agent_level_one_triage:
+    name: agent_level_one_triage
+    entrypoint: src/agent/agent_level_one_triage.py
     platform: linux/arm64
     container_runtime: docker
     aws:
@@ -602,7 +629,7 @@ agentcore status
 
 Devrait afficher :
 ```
-Agent: my_agent
+Agent: agent_level_one_triage
 Status: ACTIVE
 Endpoint: https://xxxxxx.execute-api.eu-central-1.amazonaws.com/prod/invoke
 Region: eu-central-1
@@ -643,19 +670,22 @@ L'agent va :
 
 AgentCore Runtime intègre automatiquement avec CloudWatch Logs.
 
-**Via le CLI :**
+**Via AWS CLI :**
 ```bash
-# Voir les derniers logs
-agentcore logs --tail 50
+# Trouver le nom du log group
+agentcore status
 
-# Suivre les logs en temps réel
-agentcore logs --follow
+# Voir les derniers logs (remplacez ID_DU_LOG_GROUP par l'ID affiché dans status)
+aws logs tail /aws/lambda/bedrock-agentcore-agent_level_one_triage-ID_DU_LOG_GROUP --follow
+
+# Ou lister tous les log groups pour trouver celui de votre agent
+aws logs describe-log-groups --log-group-name-prefix /aws/lambda/bedrock-agentcore
 ```
 
 **Via la console AWS :**
 1. Ouvrez CloudWatch dans la console AWS
 2. Allez dans **Logs > Log groups**
-3. Cherchez le log group de votre agent
+3. Cherchez le log group : `/aws/lambda/bedrock-agentcore-agent_level_one_triage`
 4. Explorez les logs d'exécution
 
 ### Traces X-Ray (si configuré)
@@ -746,23 +776,6 @@ Le rôle IAM créé automatiquement doit avoir :
   ]
 }
 ```
-
-### L'agent local ne démarre pas
-
-**Erreur :** `Port 8080 already in use`
-
-**Solution :**
-```bash
-# Trouver le processus utilisant le port
-lsof -i :8080
-
-# Tuer le processus
-kill -9 <PID>
-
-# Ou utiliser un autre port
-agentcore launch --local --port 8081
-```
-
 ---
 
 ## Prochaines étapes
@@ -777,7 +790,7 @@ Dans le **prochain article (Article 2)**, nous allons :
    - ServiceNow envoie les données de ticket via webhook
    - Lambda invoque l'agent avec les données
    - Agent analyse et met à jour ServiceNow directement
-🔜 **Créer une suite de tests complète** (81 tests, 91% de couverture)
+🔜 **Créer une suite de tests complète**
 
 **Branche Git :** `step-02-gateway-servicenow`
 
@@ -791,11 +804,11 @@ Dans le **prochain article (Article 2)**, nous allons :
 - [Amazon Nova Models](https://aws.amazon.com/bedrock/nova/)
 
 ### Code source
-- [Repository GitHub](https://github.com/votre-username/aws-agentcore-tutorial)
+- [Repository GitHub](https://github.com/TienShinhan-world/aws-agentcore-tutorial)
 - Branch : `step-01-runtime-deployment`
 
 ### Support
-- Ouvrez une [issue sur GitHub](https://github.com/votre-username/aws-agentcore-tutorial/issues)
+- Ouvrez une [issue sur GitHub](https://github.com/TienShinhan-world/aws-agentcore-tutorial/issues)
 - [ServiceNow Developer Portal](https://developer.servicenow.com/)
 
 ---
@@ -816,16 +829,14 @@ Félicitations ! 🎉 Vous avez déployé votre premier agent intelligent avec A
 **L'approche progressive :**
 - **Article 1** (ce tutoriel) : Agent fonctionnel avec parsing de données
 - **Article 2** : Architecture webhook complète + API ServiceNow réelle + Infrastructure AWS CDK
-- **Articles 3-5** : Fonctionnalités avancées (KB, Observability, Identity)
+- **Articles 3-X** : Fonctionnalités avancées (Mémoire, KB, Observability, Identity)
 
 Cette approche vous permet de valider rapidement le concept avant d'investir dans l'infrastructure complète. L'agent est déjà conçu pour recevoir des données de tickets en entrée, ce qui facilite l'intégration webhook dans l'Article 2.
 
-**Prêt pour la suite ?** → [Article 2 : Gateway et intégration ServiceNow](article-02-gateway.md)
-
 ---
 
-**Auteur :** Votre Nom
+**Auteur :** Anthony PINTO
 **Date :** Octobre 2025
-**Série :** Agent de Support Backoffice avec AWS AgentCore (1/5)
+**Série :** Agent de Support Backoffice avec AWS AgentCore (1/X)
 
-*Cet article fait partie d'une série de 5 articles sur AWS AgentCore.*
+*Cet article fait partie d'une série d'articles sur AWS AgentCore.*
