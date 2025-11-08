@@ -1,20 +1,7 @@
 import json
-import logging
-
 from strands import Agent, tool
 from strands_tools import calculator, current_time
-
-# Import the AgentCore SDK
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
-
-# Import ServiceNow client
-import sys
-import os
-# Add parent directory to path to import servicenow module
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from servicenow.client import update_ticket_with_resolution, ServiceNowError
-
-logger = logging.getLogger(__name__)
 
 WELCOME_MESSAGE = """
 Welcome to the ServiceNow Backoffice Support Assistant!
@@ -24,27 +11,26 @@ I can help you analyze tickets, search the knowledge base, and prepare ticket up
 SYSTEM_PROMPT = """
 You are a helpful backoffice support assistant for ServiceNow ticket management.
 Your role is to:
-1. Analyze incoming support tickets received via webhook
+1. Parse and analyze ticket data received from webhooks
 2. Search the knowledge base for relevant solutions
-3. Update ServiceNow tickets directly with proposed resolutions
-4. Provide clear, professional responses
+3. Update ServiceNow tickets with proposed resolutions
+4. Provide clear, professional responses to support staff
 
 When analyzing a ticket:
-- Extract key information from the ticket data provided
+- Parse the ticket data JSON to extract key information
 - Search the knowledge base for similar issues
 - Propose a resolution based on available information
-- Update the ticket in ServiceNow with your findings
+- Update the ServiceNow ticket with work notes and resolution
 
-You receive complete ticket data via webhook and should analyze it immediately.
+You receive complete ticket data via webhook.
 Always be concise and professional in your responses.
 """
 
 @tool
 def parse_ticket_data(ticket_json: str) -> str:
     """
-    Parse and format ticket data received from ServiceNow webhook.
-
-    This tool extracts key information from the ticket data for analysis.
+    Parse ticket data received from ServiceNow webhook.
+    Extracts key information for analysis.
     """
     try:
         ticket = json.loads(ticket_json)
@@ -55,17 +41,13 @@ def parse_ticket_data(ticket_json: str) -> str:
             "description": ticket.get("description", ""),
             "priority": ticket.get("priority", ""),
             "state": ticket.get("state", ""),
-            "assigned_to": ticket.get("assigned_to", ""),
             "requester": ticket.get("caller_id", ""),
-            "created_date": ticket.get("sys_created_on", ""),
-            "category": ticket.get("category", ""),
-            "subcategory": ticket.get("subcategory", "")
+            "category": ticket.get("category", "")
         }
 
         return json.dumps(formatted, indent=2)
     except Exception as e:
-        logger.error(f"Error parsing ticket data: {e}")
-        return json.dumps({"error": f"Failed to parse ticket data: {str(e)}"})
+        return json.dumps({"error": f"Failed to parse: {str(e)}"})
 
 
 @tool
@@ -142,48 +124,27 @@ def search_knowledge_base(query: str) -> str:
 @tool
 def update_servicenow_ticket(ticket_number: str, resolution_notes: str) -> str:
     """
-    Update a ServiceNow ticket with resolution notes and set it to In Progress.
-
-    This tool makes a real API call to ServiceNow to update the ticket.
+    Update ServiceNow ticket with resolution notes.
+    Makes real API call to ServiceNow (in Article 2).
     """
     try:
-        logger.info(f"Updating ServiceNow ticket {ticket_number}")
-
-        # Call ServiceNow API to update the ticket
-        result = update_ticket_with_resolution(
-            ticket_number=ticket_number,
-            resolution_notes=resolution_notes,
-            set_in_progress=True
-        )
-
-        response = {
+        # Simulated update - will be replaced with real ServiceNow API call in Article 2
+        result = {
             "success": True,
             "ticket_number": ticket_number,
-            "message": "Ticket updated successfully in ServiceNow",
+            "message": "Ticket update prepared",
             "state": "In Progress",
-            "work_notes_added": resolution_notes[:100] + "..." if len(resolution_notes) > 100 else resolution_notes
+            "work_notes": resolution_notes,
+            "note": "This is a simulated update. In Article 2, this will make a real API call to ServiceNow."
         }
 
-        logger.info(f"Successfully updated ticket {ticket_number}")
-        return json.dumps(response, indent=2)
-
-    except ServiceNowError as e:
-        logger.error(f"ServiceNow API error updating ticket {ticket_number}: {e}")
-        error_response = {
-            "success": False,
-            "ticket_number": ticket_number,
-            "error": f"Failed to update ServiceNow ticket: {str(e)}"
-        }
-        return json.dumps(error_response, indent=2)
+        return json.dumps(result, indent=2)
 
     except Exception as e:
-        logger.error(f"Unexpected error updating ticket {ticket_number}: {e}")
-        error_response = {
+        return json.dumps({
             "success": False,
-            "ticket_number": ticket_number,
-            "error": f"Unexpected error: {str(e)}"
-        }
-        return json.dumps(error_response, indent=2)
+            "error": f"Failed to update: {str(e)}"
+        }, indent=2)
 
 
 # Create an AgentCore app
