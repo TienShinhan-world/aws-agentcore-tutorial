@@ -1,7 +1,7 @@
 # Article 1 : Déployer un agent de support avec AWS AgentCore Runtime
 
 > **Série : Agent de Support Backoffice avec AWS AgentCore**
-> **Étape 1 sur 5** | [English version](../en/article-01-runtime.md)
+> **Étape 1**
 
 ## Table des matières
 
@@ -181,6 +181,11 @@ agentcore --help
 ```
 
 Vous devriez voir l'aide du CLI avec les commandes disponibles.
+
+### 5. Indiquer votre AWS Account
+
+Il faut que vous modifiez dans le fichier `.bedrock_agentcore.yaml` la valeur AWS_ACCOUNT_NUMBER avec votre numéro de compte AWS.
+
 
 ---
 
@@ -428,20 +433,6 @@ Avant de déployer sur AWS, testons l'agent localement.
 agentcore launch --local
 ```
 
-**Ce que fait cette commande :**
-- Lance l'agent dans un serveur local
-- Écoute sur `http://localhost:8080`
-- Permet de tester l'agent sans déploiement AWS
-- Utilise vos credentials AWS locaux pour accéder à Bedrock
-
-Vous devriez voir :
-```
-INFO:     Started server process
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8080
-```
-
 ### 2. Tester avec le CLI AgentCore
 
 Ouvrez un nouveau terminal (gardez le serveur qui tourne) et testez :
@@ -648,8 +639,8 @@ AgentCore Runtime intègre automatiquement avec CloudWatch Logs.
 # Trouver le nom du log group
 agentcore status
 
-# Voir les derniers logs (remplacez LOG_GROUP_NAME par le nom affiché dans status)
-aws logs tail /aws/lambda/bedrock-agentcore-agent_level_one_triage --follow
+# Voir les derniers logs (remplacez ID_DU_LOG_GROUP par l'ID affiché dans status)
+aws logs tail /aws/lambda/bedrock-agentcore-agent_level_one_triage-ID_DU_LOG_GROUP --follow
 
 # Ou lister tous les log groups pour trouver celui de votre agent
 aws logs describe-log-groups --log-group-name-prefix /aws/lambda/bedrock-agentcore
@@ -749,23 +740,6 @@ Le rôle IAM créé automatiquement doit avoir :
   ]
 }
 ```
-
-### L'agent local ne démarre pas
-
-**Erreur :** `Port 8080 already in use`
-
-**Solution :**
-```bash
-# Trouver le processus utilisant le port
-lsof -i :8080
-
-# Tuer le processus
-kill -9 <PID>
-
-# Ou utiliser un autre port
-agentcore launch --local --port 8081
-```
-
 ---
 
 ## Prochaines étapes
@@ -780,7 +754,7 @@ Dans le **prochain article (Article 2)**, nous allons :
    - ServiceNow envoie les données de ticket via webhook
    - Lambda invoque l'agent avec les données
    - Agent analyse et met à jour ServiceNow directement
-🔜 **Créer une suite de tests complète** (81 tests, 91% de couverture)
+🔜 **Créer une suite de tests complète**
 
 **Branche Git :** `step-02-gateway-servicenow`
 
@@ -794,11 +768,11 @@ Dans le **prochain article (Article 2)**, nous allons :
 - [Amazon Nova Models](https://aws.amazon.com/bedrock/nova/)
 
 ### Code source
-- [Repository GitHub](https://github.com/votre-username/aws-agentcore-tutorial)
+- [Repository GitHub](https://github.com/TienShinhan-world/aws-agentcore-tutorial)
 - Branch : `step-01-runtime-deployment`
 
 ### Support
-- Ouvrez une [issue sur GitHub](https://github.com/votre-username/aws-agentcore-tutorial/issues)
+- Ouvrez une [issue sur GitHub](https://github.com/TienShinhan-world/aws-agentcore-tutorial/issues)
 - [ServiceNow Developer Portal](https://developer.servicenow.com/)
 
 ---
@@ -819,16 +793,14 @@ Félicitations ! 🎉 Vous avez déployé votre premier agent intelligent avec A
 **L'approche progressive :**
 - **Article 1** (ce tutoriel) : Agent fonctionnel avec parsing de données
 - **Article 2** : Architecture webhook complète + API ServiceNow réelle + Infrastructure AWS CDK
-- **Articles 3-5** : Fonctionnalités avancées (KB, Observability, Identity)
+- **Articles 3-X** : Fonctionnalités avancées (Mémoire, KB, Observability, Identity)
 
 Cette approche vous permet de valider rapidement le concept avant d'investir dans l'infrastructure complète. L'agent est déjà conçu pour recevoir des données de tickets en entrée, ce qui facilite l'intégration webhook dans l'Article 2.
 
-**Prêt pour la suite ?** → [Article 2 : Gateway et intégration ServiceNow](article-02-gateway.md)
-
 ---
 
-**Auteur :** Votre Nom
+**Auteur :** Anthony PINTO
 **Date :** Octobre 2025
-**Série :** Agent de Support Backoffice avec AWS AgentCore (1/5)
+**Série :** Agent de Support Backoffice avec AWS AgentCore (1/X)
 
-*Cet article fait partie d'une série de 5 articles sur AWS AgentCore.*
+*Cet article fait partie d'une série d'articles sur AWS AgentCore.*
