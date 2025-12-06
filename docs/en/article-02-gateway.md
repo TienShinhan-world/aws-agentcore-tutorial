@@ -1,605 +1,488 @@
-# Article 2: ServiceNow Webhook Integration with AWS AgentCore
+# Article 2: Expose Your Agent via REST API with AWS AgentCore
 
 > **Series: Backoffice Support Agent with AWS AgentCore**
-> **Step 2 of 5** | [Version française](../fr/article-02-gateway.md)
+> **Step 2** | [Version française](../fr/article-02-gateway.md)
 
 ## Table of Contents
 
 1. [Introduction](#introduction)
-2. [Architecture Overview](#architecture-overview)
-3. [What We'll Build](#what-well-build)
-4. [Prerequisites](#prerequisites)
-5. [Part 1: ServiceNow API Client](#part-1-servicenow-api-client)
-6. [Part 2: Modifying Agent Tools](#part-2-modifying-agent-tools)
-7. [Part 3: Lambda Webhook Handler](#part-3-lambda-webhook-handler)
-8. [Part 4: AWS Infrastructure (CDK)](#part-4-aws-infrastructure-cdk)
-9. [Part 5: ServiceNow Configuration](#part-5-servicenow-configuration)
-10. [Part 6: Testing the Integration](#part-6-testing-the-integration)
-11. [Part 7: Automated Testing](#part-7-automated-testing)
-12. [Troubleshooting](#troubleshooting)
-13. [Next Steps](#next-steps)
+2. [Architecture](#architecture)
+3. [Prerequisites](#prerequisites)
+4. [Direct Agent Invocation](#direct-agent-invocation)
+5. [Webhook Infrastructure with CDK](#webhook-infrastructure-with-cdk)
+6. [Infrastructure Deployment](#infrastructure-deployment)
+7. [Post-Deployment Configuration](#post-deployment-configuration)
+8. [Testing and Validation](#testing-and-validation)
+9. [Troubleshooting](#troubleshooting)
+10. [Next Steps](#next-steps)
 
 ---
 
 ## Introduction
 
-In [Article 1](article-01-runtime.md), we deployed our first agent with AWS AgentCore Runtime using simulated data. Now we're taking it to production by:
+In [Article 1](article-01-runtime.md), we deployed our support agent with AWS AgentCore Runtime. The agent works and can be invoked via the `agentcore invoke` CLI.
 
-- ✅ Creating a **real ServiceNow integration** with API client
-- ✅ Implementing **webhook architecture** (ServiceNow pushes data to our agent)
-- ✅ Deploying **API Gateway + Lambda** infrastructure
-- ✅ Building a **comprehensive test suite** (91% code coverage!)
-- ✅ Configuring **ServiceNow Business Rules** to trigger webhooks
+But how do we allow external systems (like ServiceNow) to call our agent? That's what we'll solve in this article.
 
-### Why Webhooks Instead of Polling?
+### What You Will Build
 
-Instead of having our agent constantly poll ServiceNow for new tickets (which wastes resources and adds latency), we use **webhooks**:
-
-**Webhook Architecture:**
-```
-ServiceNow (new ticket created)
-    ↓ Triggers Business Rule
-    ↓ HTTP POST
-API Gateway (/webhook/servicenow)
-    ↓ Invokes
-Lambda Function (webhook_handler)
-    ↓ Calls
-Agent (analyzes ticket + searches KB)
-    ↓ Updates
-ServiceNow (adds work notes via API)
-```
-
-**Benefits:**
-- ⚡ **Instant response** (no polling delay)
-- 💰 **Cost-effective** (pay per ticket, not per poll)
-- 🎯 **Event-driven** (agent only runs when needed)
-- 📊 **Scalable** (handles spikes automatically)
+In this article, we will:
+- ✅ Understand how to invoke the agent via the AWS `bedrock-agentcore` API
+- ✅ Deploy a complete webhook infrastructure with AWS CDK
+- ✅ Create a secure REST API with API Gateway
+- ✅ Configure a Lambda that bridges the API and the agent
+- ✅ Test everything with curl
 
 ### Estimated Time
-⏱️ **60-90 minutes** to complete this tutorial.
+⏱️ **30-45 minutes** to complete this tutorial.
 
 ---
 
-## Architecture Overview
+## Architecture
 
-### High-Level Flow
+### Overview
 
 ```
-┌──────────────┐         ┌──────────────┐         ┌──────────────┐
-│  ServiceNow  │────────▶│ API Gateway  │────────▶│    Lambda    │
-│              │  POST   │              │ Invoke  │   Handler    │
-│ (New Ticket) │         │  /webhook    │         │              │
-└──────────────┘         └──────────────┘         └──────┬───────┘
-                                                          │
-                                                          ▼
-                                                   ┌──────────────┐
-                                                   │    Agent     │
-                                                   │   (Bedrock)  │
-                                                   └──────┬───────┘
-                                                          │
-                                                          ▼
-                                                   ┌──────────────┐
-                                                   │ ServiceNow   │
-                                                   │     API      │
-                                                   │ (Update)     │
-                                                   └──────────────┘
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│                 │     │                 │     │                 │     │                 │
+│  HTTP Client    │────▶│  API Gateway    │────▶│     Lambda      │────▶│  AgentCore      │
+│  (curl, app)    │     │  + API Key      │     │  (handler.py)   │     │  Runtime        │
+│                 │◀────│                 │◀────│                 │◀────│                 │
+└─────────────────┘     └─────────────────┘     └─────────────────┘     └─────────────────┘
+                              │                        │
+                              │                        │
+                              ▼                        ▼
+                        CloudWatch              Secrets Manager
+                          Logs                  (credentials)
 ```
 
-### Components We'll Build
+### Why This Architecture?
 
-1. **ServiceNow API Client** (`src/servicenow/client.py`)
-   - REST API wrapper for ServiceNow
-   - Methods: get_incident, update_incident, add_work_notes, resolve_incident
+1. **API Gateway**: Secure entry point with API Key authentication, throttling, and logging
+2. **Lambda**: Transformation logic between HTTP request format and AgentCore expected format
+3. **AgentCore Runtime**: Our agent deployed in Article 1
+4. **Secrets Manager**: Secure credential storage (used in Article 3)
 
-2. **Configuration Module** (`src/servicenow/config.py`)
-   - Loads credentials from environment/Secrets Manager
-   - Supports basic auth and OAuth
+### Data Flow
 
-3. **Modified Agent Tools** (`src/agent/my_agent.py`)
-   - `parse_ticket_data` - Extracts ticket info from webhook
-   - `search_knowledge_base` - Finds relevant solutions
-   - `update_servicenow_ticket` - Updates ticket via API
-
-4. **Lambda Webhook Handler** (`src/servicenow/webhook_handler.py`)
-   - Receives POST from ServiceNow
-   - Invokes agent with ticket data
-   - Returns HTTP response
-
-5. **AWS CDK Infrastructure** (`infrastructure/cdk/`)
-   - API Gateway REST API
-   - Lambda function
-   - Secrets Manager for credentials
-   - IAM roles and CloudWatch logs
-
-6. **Comprehensive Test Suite** (`tests/`)
-   - 81 automated tests
-   - 91% code coverage
-   - Unit + integration tests
-
----
-
-## What We'll Build
-
-By the end of this article, you'll have:
-
-✅ A production-ready ServiceNow webhook integration
-✅ Real API calls to ServiceNow (no more simulated data!)
-✅ AWS infrastructure deployed via CDK
-✅ ServiceNow Business Rule triggering webhooks
-✅ 81 automated tests ensuring reliability
-✅ Complete monitoring and logging
+1. A client sends a POST request to `/webhook/servicenow` with ticket data
+2. API Gateway validates the API Key and forwards to Lambda
+3. Lambda parses the payload, builds the prompt, and calls AgentCore
+4. AgentCore executes the agent which analyzes the ticket
+5. The response flows back to the client
 
 ---
 
 ## Prerequisites
 
-Before starting, ensure you have:
-
 ### From Article 1
-- ✅ Python 3.9+ with virtual environment
-- ✅ AWS CLI configured
-- ✅ AWS account with Bedrock access
-- ✅ Basic agent from Article 1 working
 
-### New Requirements
-- ✅ **ServiceNow Instance** (developer instance or production)
-  - Get a free developer instance: [developer.servicenow.com](https://developer.servicenow.com/)
-- ✅ **ServiceNow Admin Access** (to create Business Rules and REST Messages)
-- ✅ **Node.js 18+** (for AWS CDK)
-- ✅ **ServiceNow Credentials** (username/password or OAuth token)
+- ✅ Agent deployed with `agentcore launch`
+- ✅ Agent ARN available in `.bedrock_agentcore.yaml`
 
-### Install Additional Dependencies
+### New Prerequisites
 
-```bash
-# Activate your virtual environment
-source .venv/bin/activate
+1. **Node.js and npm** (for AWS CDK)
+   ```bash
+   node --version  # v18.x or higher recommended
+   npm --version
+   ```
 
-# Install new dependencies
-pip install requests>=2.31.0
+2. **AWS CDK CLI**
+   ```bash
+   npm install -g aws-cdk
+   cdk --version
+   ```
 
-# Install test dependencies (optional but recommended)
-pip install -r tests/requirements-test.txt
-
-# Install CDK (if not already installed)
-npm install -g aws-cdk
-```
+3. **Docker** (for Lambda build)
+   ```bash
+   docker --version
+   ```
 
 ---
 
-## Part 1: ServiceNow API Client
+## Direct Agent Invocation
 
-First, we'll create a robust client for the ServiceNow REST API.
+Before building the infrastructure, let's understand how to invoke the agent programmatically.
 
-### 1.1 Configuration Module
+### The `bedrock-agentcore` Client
 
-Create `src/servicenow/config.py`:
-
-```python
-"""
-ServiceNow Configuration Module
-Manages credentials and API configuration
-"""
-import os
-from dataclasses import dataclass
-from typing import Optional
-
-
-@dataclass
-class ServiceNowConfig:
-    """ServiceNow configuration container"""
-
-    instance_url: str
-    username: Optional[str] = None
-    password: Optional[str] = None
-    oauth_token: Optional[str] = None
-    api_version: str = "v2"
-    timeout: int = 30
-    verify_ssl: bool = True
-
-    @classmethod
-    def from_environment(cls) -> "ServiceNowConfig":
-        """Load configuration from environment variables"""
-        instance_url = os.getenv("SERVICENOW_INSTANCE_URL")
-        if not instance_url:
-            raise ValueError("SERVICENOW_INSTANCE_URL required")
-
-        instance_url = instance_url.rstrip("/")
-
-        username = os.getenv("SERVICENOW_USERNAME")
-        password = os.getenv("SERVICENOW_PASSWORD")
-        oauth_token = os.getenv("SERVICENOW_OAUTH_TOKEN")
-
-        if not oauth_token and not (username and password):
-            raise ValueError(
-                "Either SERVICENOW_OAUTH_TOKEN or both "
-                "SERVICENOW_USERNAME and SERVICENOW_PASSWORD required"
-            )
-
-        return cls(
-            instance_url=instance_url,
-            username=username,
-            password=password,
-            oauth_token=oauth_token,
-            api_version=os.getenv("SERVICENOW_API_VERSION", "v2"),
-            timeout=int(os.getenv("SERVICENOW_TIMEOUT", "30")),
-            verify_ssl=os.getenv("SERVICENOW_VERIFY_SSL", "true").lower() == "true"
-        )
-
-    def get_table_api_url(self, table_name: str) -> str:
-        """Get API URL for a ServiceNow table"""
-        return f"{self.instance_url}/api/now/{self.api_version}/table/{table_name}"
-```
-
-**Key features:**
-- Supports both basic auth and OAuth
-- Loads from environment variables
-- Validates required configuration
-- Provides URL builders for API endpoints
-
-### 1.2 ServiceNow API Client
-
-Create `src/servicenow/client.py`:
+AWS provides a specific boto3 client for AgentCore:
 
 ```python
-"""
-ServiceNow REST API Client
-"""
+import boto3
 import json
-import logging
-from typing import Dict, Any, Optional
-import requests
-from requests.auth import HTTPBasicAuth
 
-from .config import ServiceNowConfig, get_config
+# Create the bedrock-agentcore client
+client = boto3.client('bedrock-agentcore', region_name='eu-central-1')
 
-logger = logging.getLogger(__name__)
+# Prepare the payload
+payload = json.dumps({
+    "prompt": "Analyze this ticket: INC0001234 - VPN connection issues"
+})
 
-
-class ServiceNowError(Exception):
-    """Base exception for ServiceNow API errors"""
-    pass
-
-
-class ServiceNowClient:
-    """Client for ServiceNow REST API"""
-
-    def __init__(self, config: Optional[ServiceNowConfig] = None):
-        self.config = config or get_config()
-        self.session = self._create_session()
-
-    def _create_session(self) -> requests.Session:
-        """Create authenticated session"""
-        session = requests.Session()
-
-        if self.config.oauth_token:
-            session.headers["Authorization"] = f"Bearer {self.config.oauth_token}"
-        elif self.config.username and self.config.password:
-            session.auth = HTTPBasicAuth(
-                self.config.username,
-                self.config.password
-            )
-        else:
-            raise ServiceNowError("No authentication method configured")
-
-        session.headers.update({
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        })
-
-        return session
-
-    def get_incident(self, number: str) -> Dict[str, Any]:
-        """Get incident by number"""
-        url = self.config.get_table_api_url("incident")
-        params = {
-            "sysparm_query": f"number={number}",
-            "sysparm_limit": "1"
-        }
-
-        response = self.session.get(
-            url,
-            params=params,
-            timeout=self.config.timeout
-        )
-        response.raise_for_status()
-
-        result = response.json()
-        if not result.get("result"):
-            raise ServiceNowError(f"Incident {number} not found")
-
-        return result["result"][0]
-
-    def add_work_notes(
-        self,
-        number: str,
-        work_notes: str,
-        state: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Add work notes to incident"""
-        # First get sys_id
-        incident = self.get_incident(number)
-        sys_id = incident["sys_id"]
-
-        # Prepare update
-        updates = {"work_notes": work_notes}
-        if state:
-            updates["state"] = state
-
-        # Update incident
-        url = f"{self.config.get_table_api_url('incident')}/{sys_id}"
-        response = self.session.patch(
-            url,
-            json=updates,
-            timeout=self.config.timeout
-        )
-        response.raise_for_status()
-
-        logger.info(f"Updated incident {number}")
-        return response.json().get("result", {})
-```
-
-**Key methods:**
-- `get_incident(number)` - Fetch ticket by incident number
-- `add_work_notes(number, notes, state)` - Add notes and optionally change state
-- `resolve_incident(number, notes)` - Mark ticket as resolved
-- Error handling with custom exceptions
-
-### 1.3 Test the Client (Optional)
-
-Set environment variables and test:
-
-```bash
-export SERVICENOW_INSTANCE_URL="https://YOUR_INSTANCE.service-now.com"
-export SERVICENOW_USERNAME="your_username"
-export SERVICENOW_PASSWORD="your_password"
-
-# Test in Python
-python -c "
-from servicenow.client import ServiceNowClient
-client = ServiceNowClient()
-ticket = client.get_incident('INC0010001')
-print(ticket)
-"
-```
-
----
-
-## Part 2: Modifying Agent Tools
-
-Now we'll update the agent to use real ServiceNow API calls instead of simulated data.
-
-### 2.1 Update Agent (`src/agent/my_agent.py`)
-
-**Changes needed:**
-
-1. **Import ServiceNow client:**
-```python
-from servicenow.client import update_ticket_with_resolution, ServiceNowError
-```
-
-2. **Replace `get_ticket_info` with `parse_ticket_data`:**
-```python
-@tool
-def parse_ticket_data(ticket_json: str) -> str:
-    """
-    Parse ticket data received from ServiceNow webhook.
-    Extracts key information for analysis.
-    """
-    try:
-        ticket = json.loads(ticket_json)
-
-        formatted = {
-            "ticket_number": ticket.get("number", "Unknown"),
-            "short_description": ticket.get("short_description", ""),
-            "description": ticket.get("description", ""),
-            "priority": ticket.get("priority", ""),
-            "state": ticket.get("state", ""),
-            "requester": ticket.get("caller_id", ""),
-            "category": ticket.get("category", "")
-        }
-
-        return json.dumps(formatted, indent=2)
-    except Exception as e:
-        return json.dumps({"error": f"Failed to parse: {str(e)}"})
-```
-
-3. **Replace `prepare_ticket_update` with `update_servicenow_ticket`:**
-```python
-@tool
-def update_servicenow_ticket(ticket_number: str, resolution_notes: str) -> str:
-    """
-    Update ServiceNow ticket with resolution notes.
-    Makes real API call to ServiceNow.
-    """
-    try:
-        logger.info(f"Updating ticket {ticket_number}")
-
-        # Real API call to ServiceNow
-        result = update_ticket_with_resolution(
-            ticket_number=ticket_number,
-            resolution_notes=resolution_notes,
-            set_in_progress=True
-        )
-
-        return json.dumps({
-            "success": True,
-            "ticket_number": ticket_number,
-            "message": "Ticket updated in ServiceNow",
-            "state": "In Progress"
-        }, indent=2)
-
-    except ServiceNowError as e:
-        logger.error(f"ServiceNow error: {e}")
-        return json.dumps({
-            "success": False,
-            "error": f"Failed to update: {str(e)}"
-        }, indent=2)
-```
-
-4. **Update agent tools list:**
-```python
-agent = Agent(
-    model="eu.amazon.nova-lite-v1:0",
-    system_prompt=SYSTEM_PROMPT,
-    tools=[
-        calculator,
-        current_time,
-        parse_ticket_data,      # New: parse webhook data
-        search_knowledge_base,
-        update_servicenow_ticket  # New: real API calls
-    ]
+# Invoke the agent
+response = client.invoke_agent_runtime(
+    agentRuntimeArn='arn:aws:bedrock-agentcore:eu-central-1:ACCOUNT_ID:runtime/AGENT_ID',
+    runtimeSessionId='unique-session-id-minimum-33-characters',
+    payload=payload,
+    qualifier="DEFAULT"
 )
+
+# Read the response
+response_body = response['response'].read()
+response_data = json.loads(response_body)
+print("Agent Response:", response_data)
 ```
 
-### 2.2 Update System Prompt
+### Important Parameters
 
-```python
-SYSTEM_PROMPT = """
-You are a helpful backoffice support assistant for ServiceNow.
+| Parameter | Description | Constraints |
+|-----------|-------------|-------------|
+| `agentRuntimeArn` | Full ARN of the deployed agent | Format: `arn:aws:bedrock-agentcore:REGION:ACCOUNT:runtime/AGENT_ID` |
+| `runtimeSessionId` | Unique session identifier | **Minimum 33 characters** |
+| `payload` | Data to send to the agent | Stringified JSON with `prompt` key |
+| `qualifier` | Agent version | `DEFAULT` for active version |
 
-Your role:
-1. Analyze tickets received via webhook
-2. Search knowledge base for solutions
-3. Update ServiceNow directly with your findings
-4. Provide clear, professional responses
+### Retrieve Your Agent ARN
 
-When analyzing:
-- Extract key info from ticket data
-- Search KB for similar issues
-- Propose resolution based on KB articles
-- Update ticket in ServiceNow with work notes
+The ARN is found in the `.bedrock_agentcore.yaml` file generated during deployment:
 
-You receive complete ticket data via webhook.
-Always be concise and professional.
-"""
+```bash
+grep "agent_arn" .bedrock_agentcore.yaml
+```
+
+Example output:
+```
+agent_arn: arn:aws:bedrock-agentcore:eu-central-1:653783183133:runtime/agent_level_one_triage-9rGFpG5ZFx
 ```
 
 ---
 
-## Part 3: Lambda Webhook Handler
+## Webhook Infrastructure with CDK
 
-Create the Lambda function that receives webhooks from ServiceNow.
+Now, let's create the infrastructure that will expose our agent via a REST API.
 
-### 3.1 Webhook Handler (`src/servicenow/webhook_handler.py`)
+### CDK Project Structure
+
+```
+infrastructure/
+└── cdk/
+    ├── bin/
+    │   └── app.ts              # CDK entry point
+    ├── lib/
+    │   └── servicenow-webhook-stack.ts  # Stack definition
+    ├── package.json
+    ├── tsconfig.json
+    └── cdk.json
+```
+
+### The CDK Stack
+
+Here are the main components of our stack (`lib/servicenow-webhook-stack.ts`):
+
+#### 1. IAM Role for Lambda
+
+```typescript
+const lambdaRole = new iam.Role(this, 'WebhookLambdaRole', {
+  assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+  managedPolicies: [
+    iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
+  ],
+});
+
+// Permission to invoke AgentCore
+lambdaRole.addToPolicy(
+  new iam.PolicyStatement({
+    effect: iam.Effect.ALLOW,
+    actions: ['bedrock-agentcore:InvokeAgentRuntime'],
+    resources: ['arn:aws:bedrock-agentcore:eu-central-1:ACCOUNT_ID:runtime/*'],
+  })
+);
+```
+
+**Important:** The `bedrock-agentcore:InvokeAgentRuntime` permission is specific to AgentCore. Don't confuse it with `bedrock:InvokeAgent` which is for classic Bedrock Agents.
+
+#### 2. Lambda Function
+
+```typescript
+const webhookHandler = new lambda.Function(this, 'WebhookHandler', {
+  runtime: lambda.Runtime.PYTHON_3_12,
+  handler: 'handler.lambda_handler',
+  code: lambda.Code.fromAsset(path.join(__dirname, '../../../src/webhook')),
+  role: lambdaRole,
+  timeout: cdk.Duration.seconds(300),  // 5 minutes to give the agent time
+  memorySize: 512,
+  environment: {
+    LOG_LEVEL: 'INFO',
+  },
+});
+```
+
+#### 3. API Gateway with API Key
+
+```typescript
+const api = new apigateway.RestApi(this, 'ServiceNowWebhookApi', {
+  restApiName: 'ServiceNow Webhook API',
+  deployOptions: {
+    stageName: 'prod',
+    loggingLevel: apigateway.MethodLoggingLevel.INFO,
+  },
+});
+
+// API Key to secure access
+const apiKey = new apigateway.ApiKey(this, 'ServiceNowApiKey', {
+  apiKeyName: 'servicenow-webhook-api-key',
+  enabled: true,
+});
+
+// POST route /webhook/servicenow
+const webhookResource = api.root.addResource('webhook');
+const servicenowResource = webhookResource.addResource('servicenow');
+servicenowResource.addMethod('POST', new apigateway.LambdaIntegration(webhookHandler), {
+  apiKeyRequired: true,
+});
+```
+
+### The Lambda Handler
+
+The `src/webhook/handler.py` file bridges the API and AgentCore:
 
 ```python
-"""
-ServiceNow Webhook Handler for AWS Lambda
-"""
+import boto3
 import json
-import logging
 import os
+import uuid
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+# AgentCore client
+bedrock_agentcore = boto3.client("bedrock-agentcore", region_name="eu-central-1")
+AGENT_RUNTIME_ARN = os.environ.get("AGENT_RUNTIME_ARN")
 
+def generate_session_id(incident_number: str) -> str:
+    """Generate a session ID of 33+ characters"""
+    base = f"servicenow-{incident_number}-{uuid.uuid4().hex}"
+    return base[:50]
 
-def parse_servicenow_payload(body: str) -> dict:
-    """Parse ServiceNow webhook payload"""
-    try:
-        payload = json.loads(body)
+def lambda_handler(event, context):
+    # Parse request body
+    body = json.loads(event.get("body", "{}"))
 
-        # ServiceNow can send data in different formats
-        if "record" in payload:
-            return payload["record"]
-        elif "result" in payload:
-            return payload["result"]
-        else:
-            return payload
+    # Extract ticket data
+    incident_number = body.get("number", "UNKNOWN")
 
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON: {e}")
+    # Build the prompt
+    prompt = f"""Analyze the following ServiceNow incident:
+    Ticket Number: {incident_number}
+    Description: {body.get("description", "")}
+    Priority: {body.get("priority", "")}
+    """
 
+    # Invoke the agent
+    response = bedrock_agentcore.invoke_agent_runtime(
+        agentRuntimeArn=AGENT_RUNTIME_ARN,
+        runtimeSessionId=generate_session_id(incident_number),
+        payload=json.dumps({"prompt": prompt}),
+        qualifier="DEFAULT"
+    )
 
-def invoke_agent(ticket_data: dict) -> str:
-    """Invoke agent with ticket data"""
-    ticket_json = json.dumps(ticket_data)
-    prompt = f"""New ServiceNow ticket received:
-
-{ticket_json}
-
-Analyze this ticket, search the knowledge base,
-and update ServiceNow with your recommendations.
-"""
-
-    # Import agent
-    import sys
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-    from agent.my_agent import agent
-
-    # Invoke
-    response = agent(prompt)
-
-    # Extract text
-    if hasattr(response, 'message'):
-        return response.message['content'][0]['text']
-    return str(response)
-
-
-def lambda_handler(event: dict, context) -> dict:
-    """AWS Lambda handler"""
-    try:
-        logger.info("Received webhook request")
-
-        # Extract body
-        body = event.get('body', '{}')
-
-        # Decode if base64
-        if event.get('isBase64Encoded', False):
-            import base64
-            body = base64.b64decode(body).decode('utf-8')
-
-        # Parse payload
-        ticket_data = parse_servicenow_payload(body)
-        ticket_number = ticket_data.get('number', 'Unknown')
-
-        logger.info(f"Processing ticket {ticket_number}")
-
-        # Invoke agent
-        agent_response = invoke_agent(ticket_data)
-
-        # Return success
-        return {
-            "statusCode": 200,
-            "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({
-                "success": True,
-                "ticket_number": ticket_number,
-                "message": "Ticket processed",
-                "agent_analysis": agent_response
-            })
-        }
-
-    except ValueError as e:
-        logger.error(f"Invalid payload: {e}")
-        return {
-            "statusCode": 400,
-            "body": json.dumps({
-                "success": False,
-                "error": "Invalid payload"
-            })
-        }
-
-    except Exception as e:
-        logger.error(f"Error: {e}", exc_info=True)
-        return {
-            "statusCode": 500,
-            "body": json.dumps({
-                "success": False,
-                "error": "Internal server error"
-            })
-        }
+    # Return the response
+    response_body = response["response"].read()
+    return {
+        "statusCode": 200,
+        "body": json.dumps({
+            "success": True,
+            "analysis": json.loads(response_body)
+        })
+    }
 ```
-
-**Key features:**
-- Handles different ServiceNow payload formats
-- Decodes base64-encoded bodies
-- Invokes agent with ticket data
-- Returns appropriate HTTP status codes
-- Comprehensive error handling and logging
 
 ---
 
-*Continued in next message due to length...*
+## Infrastructure Deployment
 
-**Article Status:** Part 1 of article complete. Shall I continue with Parts 4-7 (AWS Infrastructure, ServiceNow Configuration, Testing, etc.)?
+### 1. Install CDK Dependencies
+
+```bash
+cd infrastructure/cdk
+npm install
+```
+
+### 2. Bootstrap CDK (First Time Only)
+
+```bash
+npm run cdk bootstrap
+```
+
+This command creates the necessary CDK resources in your AWS account.
+
+### 3. Deploy the Stack
+
+```bash
+npm run cdk deploy
+```
+
+Deployment takes about 2-3 minutes. At the end, you'll see the outputs:
+
+```
+Outputs:
+ServiceNowWebhookStack.WebhookURL = https://xxxxxx.execute-api.eu-central-1.amazonaws.com/prod/webhook/servicenow
+ServiceNowWebhookStack.ApiKeyId = xxxxxxxxxx
+ServiceNowWebhookStack.LambdaFunctionName = ServiceNowWebhookStack-WebhookHandler-xxxxx
+ServiceNowWebhookStack.GetApiKeyCommand = aws apigateway get-api-key --api-key xxxxxxxxxx --include-value --query 'value' --output text
+```
+
+### 4. Retrieve the API Key
+
+```bash
+aws apigateway get-api-key --api-key <API_KEY_ID> --include-value --query 'value' --output text
+```
+
+Note this value, you'll need it for testing.
+
+---
+
+## Post-Deployment Configuration
+
+### Configure the Agent ARN
+
+The Lambda needs to know your agent's ARN. Configure the environment variable:
+
+```bash
+aws lambda update-function-configuration \
+  --function-name <LAMBDA_FUNCTION_NAME> \
+  --environment "Variables={AGENT_RUNTIME_ARN=arn:aws:bedrock-agentcore:eu-central-1:ACCOUNT_ID:runtime/AGENT_ID,LOG_LEVEL=INFO}"
+```
+
+**Replace:**
+- `<LAMBDA_FUNCTION_NAME>`: The Lambda function name (see CDK output)
+- `ACCOUNT_ID`: Your AWS account ID
+- `AGENT_ID`: Your agent ID (from `.bedrock_agentcore.yaml`)
+
+### Verify the Configuration
+
+```bash
+aws lambda get-function-configuration \
+  --function-name <LAMBDA_FUNCTION_NAME> \
+  --query 'Environment.Variables'
+```
+
+---
+
+## Testing and Validation
+
+### Test with curl
+
+```bash
+curl --location 'https://YOUR_API_GATEWAY_URL/prod/webhook/servicenow' \
+  --header 'x-api-key: YOUR_API_KEY' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "number": "INC0001234",
+    "short_description": "Cannot access email",
+    "description": "User cannot send or receive emails since this morning",
+    "urgency": "2",
+    "impact": "2",
+    "priority": "2",
+    "category": "Email",
+    "assignment_group": "IT Support Level 1"
+}'
+```
+
+### Expected Response
+
+```json
+{
+  "success": true,
+  "incident_number": "INC0001234",
+  "analysis": "**Summary of the issue:**\nUser cannot send or receive emails since this morning...",
+  "message": "Incident analyzed successfully"
+}
+```
+
+### Check CloudWatch Logs
+
+```bash
+# Find the log group
+aws logs describe-log-groups --log-group-name-prefix /aws/lambda/ServiceNowWebhookStack
+
+# View latest logs
+aws logs tail /aws/lambda/ServiceNowWebhookStack-WebhookHandler-xxxxx --follow
+```
+
+---
+
+## Troubleshooting
+
+### Error: "not authorized to perform bedrock-agentcore:InvokeAgentRuntime"
+
+**Cause:** The Lambda IAM role doesn't have the permission.
+
+**Solution:** Verify that the CDK stack includes:
+```typescript
+actions: ['bedrock-agentcore:InvokeAgentRuntime'],
+```
+
+And redeploy with `npm run cdk deploy`.
+
+### Error: "AGENT_RUNTIME_ARN environment variable not set"
+
+**Cause:** The environment variable is not configured.
+
+**Solution:** Run the `aws lambda update-function-configuration` command from the Configuration section.
+
+### Error: "runtimeSessionId must be at least 33 characters"
+
+**Cause:** The session ID is too short.
+
+**Solution:** The handler automatically generates a 50-character ID. If testing manually, ensure you use a long enough ID.
+
+### Error: "Response ended prematurely"
+
+**Cause:** Connection issue with Bedrock (usually temporary).
+
+**Solution:** Retry after a few seconds. If the problem persists, check:
+- Agent region
+- Bedrock quotas
+- Bedrock service status
+
+### Error 403 Forbidden
+
+**Cause:** Missing or invalid API Key.
+
+**Solution:** Verify that you include the `x-api-key` header with the correct value.
+
+---
+
+## Next Steps
+
+Congratulations! 🎉 Your agent is now accessible via a secure REST API.
+
+In the **next article (Article 3)**, we will:
+
+🔜 **Connect ServiceNow to our API** via Business Rules and REST Messages
+🔜 **Modify the agent to update ServiceNow** with real API calls
+🔜 **Configure credentials** in AWS Secrets Manager
+🔜 **Test the complete flow**: ticket creation → automatic analysis → update
+
+**Git Branch:** `step-03-servicenow-integration`
+
+---
+
+## Resources
+
+### Documentation
+- [AWS CDK Documentation](https://docs.aws.amazon.com/cdk/latest/guide/)
+- [API Gateway Developer Guide](https://docs.aws.amazon.com/apigateway/latest/developerguide/)
+- [Lambda Developer Guide](https://docs.aws.amazon.com/lambda/latest/dg/)
+
+### Source Code
+- [GitHub Repository](https://github.com/your-username/aws-agentcore-tutorial)
+- Branch: `step-02-servicenow-integration`
+
+---
+
+**Author:** Anthony PINTO
+**Date:** December 2025
+**Series:** Backoffice Support Agent with AWS AgentCore (2/5)
+
+*This article is part of a series on AWS AgentCore.*

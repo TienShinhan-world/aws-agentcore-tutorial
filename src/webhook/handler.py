@@ -8,13 +8,14 @@ Architecture:
     ServiceNow → API Gateway → Lambda (this handler) → AgentCore Agent → Response
 
 Environment Variables:
-    AGENT_RUNTIME_ENDPOINT: URL of the deployed AgentCore agent runtime
+    AGENT_RUNTIME_ARN: ARN of the deployed AgentCore agent runtime
     LOG_LEVEL: Logging level (default: INFO)
 """
 
 import json
 import logging
 import os
+import uuid
 from typing import Any, Dict
 
 import boto3
@@ -25,12 +26,12 @@ LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 logger = logging.getLogger()
 logger.setLevel(LOG_LEVEL)
 
-# Initialize Bedrock Agent Runtime client
-bedrock_agent_runtime = boto3.client("bedrock-agent-runtime")
+# Initialize Bedrock AgentCore client
+REGION = os.environ.get("AWS_REGION", "eu-central-1")
+bedrock_agentcore = boto3.client("bedrock-agentcore", region_name=REGION)
 
 # Get agent configuration from environment
-AGENT_ID = os.environ.get("AGENT_ID")
-AGENT_ALIAS_ID = os.environ.get("AGENT_ALIAS_ID", "TSTALIASID")
+AGENT_RUNTIME_ARN = os.environ.get("AGENT_RUNTIME_ARN")
 
 
 def parse_servicenow_payload(body: Dict[str, Any]) -> Dict[str, Any]:
@@ -110,13 +111,29 @@ Please analyze this incident and provide:
     return prompt
 
 
-def invoke_agent(prompt: str, session_id: str = None) -> str:
+def generate_session_id(incident_number: str) -> str:
     """
-    Invoke the AgentCore agent via Bedrock Agent Runtime.
+    Generate a session ID that meets AgentCore requirements (33+ characters).
+
+    Args:
+        incident_number: The ServiceNow incident number
+
+    Returns:
+        A valid session ID string (33+ characters)
+    """
+    # Combine incident number with UUID to ensure uniqueness and length
+    base = f"servicenow-{incident_number}-{uuid.uuid4().hex}"
+    # Ensure minimum 33 characters
+    return base[:50] if len(base) >= 33 else base + "0" * (33 - len(base))
+
+
+def invoke_agent(prompt: str, session_id: str) -> str:
+    """
+    Invoke the AgentCore agent via Bedrock AgentCore API.
 
     Args:
         prompt: The prompt to send to the agent
-        session_id: Optional session ID for conversation continuity
+        session_id: Session ID for conversation continuity (must be 33+ chars)
 
     Returns:
         The agent's response text
@@ -124,35 +141,33 @@ def invoke_agent(prompt: str, session_id: str = None) -> str:
     Raises:
         RuntimeError: If agent invocation fails
     """
-    if not AGENT_ID:
-        raise RuntimeError("AGENT_ID environment variable not set")
+    if not AGENT_RUNTIME_ARN:
+        raise RuntimeError("AGENT_RUNTIME_ARN environment variable not set")
 
     try:
-        # Prepare invocation parameters
-        invoke_params = {
-            "agentId": AGENT_ID,
-            "agentAliasId": AGENT_ALIAS_ID,
-            "inputText": prompt,
-        }
+        # Prepare payload
+        payload = json.dumps({"prompt": prompt})
 
-        # Add session ID if provided
-        if session_id:
-            invoke_params["sessionId"] = session_id
+        logger.info(f"Invoking agent {AGENT_RUNTIME_ARN} with prompt length: {len(prompt)}")
+        logger.debug(f"Session ID: {session_id}")
 
-        logger.info(f"Invoking agent {AGENT_ID} with prompt length: {len(prompt)}")
+        # Invoke the agent using bedrock-agentcore client
+        response = bedrock_agentcore.invoke_agent_runtime(
+            agentRuntimeArn=AGENT_RUNTIME_ARN,
+            runtimeSessionId=session_id,
+            payload=payload,
+            qualifier="DEFAULT"
+        )
 
-        # Invoke the agent
-        response = bedrock_agent_runtime.invoke_agent(**invoke_params)
+        # Read and parse response
+        response_body = response["response"].read()
+        response_data = json.loads(response_body)
 
-        # Extract response text from event stream
-        response_text = ""
-        event_stream = response.get("completion", [])
-
-        for event in event_stream:
-            if "chunk" in event:
-                chunk = event["chunk"]
-                if "bytes" in chunk:
-                    response_text += chunk["bytes"].decode("utf-8")
+        # Extract response text
+        if isinstance(response_data, dict):
+            response_text = response_data.get("response", str(response_data))
+        else:
+            response_text = str(response_data)
 
         logger.info(f"Agent response length: {len(response_text)}")
         return response_text
@@ -160,7 +175,7 @@ def invoke_agent(prompt: str, session_id: str = None) -> str:
     except ClientError as e:
         error_code = e.response["Error"]["Code"]
         error_message = e.response["Error"]["Message"]
-        logger.error(f"Bedrock Agent Runtime error [{error_code}]: {error_message}")
+        logger.error(f"Bedrock AgentCore error [{error_code}]: {error_message}")
         raise RuntimeError(f"Failed to invoke agent: {error_message}")
     except Exception as e:
         logger.error(f"Unexpected error invoking agent: {str(e)}")
@@ -196,8 +211,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Build prompt for agent
         prompt = build_agent_prompt(incident_data)
 
-        # Generate session ID from incident number for continuity
-        session_id = f"servicenow-{incident_data['number']}"
+        # Generate session ID from incident number (must be 33+ chars for AgentCore)
+        session_id = generate_session_id(incident_data["number"])
 
         # Invoke agent
         agent_response = invoke_agent(prompt, session_id)
