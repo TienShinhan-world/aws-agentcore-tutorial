@@ -1,0 +1,21 @@
+{
+  "gateway_url": "https://servicenowgateway-wmvtywjdv3.gateway.bedrock-agentcore.eu-central-1.amazonaws.com/mcp",
+  "gateway_id": "servicenowgateway-wmvtywjdv3",
+  "region": "eu-central-1",
+  "lambda_arn": "arn:aws:lambda:eu-central-1:653783183133:function:ServiceNowWebhookStack-ServiceNowApiHandler57B96B8-0134tVQDm6K0",
+  "target_name": "servicenow-tools",
+  "tools": [
+    "update_servicenow_ticket",
+    "create_servicenow_comment",
+    "resolve_servicenow_ticket"
+  ],
+  "oauth": {
+    "token_endpoint": "https://agentcore-gateway-653783183133.auth.eu-central-1.amazoncognito.com/oauth2/token",
+    "scope": "agentcore-gateway/tools.invoke"
+  },
+  "client_info": {
+    "user_pool_id": "eu-central-1_3qGX0lxlh",
+    "client_id": "rj66pt7uiro8o62lth2s45km8",
+    "note": "Using existing Cognito from CDK stack. Client secret must be retrieved separately with: aws cognito-idp describe-user-pool-client --user-pool-id eu-central-1_3qGX0lxlh --client-id rj66pt7uiro8o62lth2s45km8 --query 'UserPoolClient.ClientSecret' --output text"
+  }
+}

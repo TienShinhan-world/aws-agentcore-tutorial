@@ -6,3 +6,7 @@ bedrock-agentcore-starter-toolkit
 # AWS SDK for webhook handler
 boto3>=1.28.0
 botocore>=1.31.0
+
+# ServiceNow client dependencies
+requests>=2.31.0
+urllib3>=2.0.0

@@ -1,4 +1,4 @@
-# Article 3 : Intégration ServiceNow bidirectionnelle
+# Article 3 : Intégration ServiceNow avec AgentCore Gateway
 
 > **Série : Agent de Support Backoffice avec AWS AgentCore**
 > **Étape 3** | [English version](../en/article-03-servicenow.md)
@@ -6,530 +6,527 @@
 ## Table des matières
 
 1. [Introduction](#introduction)
-2. [Architecture bidirectionnelle](#architecture-bidirectionnelle)
+2. [Architecture réelle](#architecture-réelle)
 3. [Prérequis](#prérequis)
-4. [Partie 1 : ServiceNow vers Agent (Webhook)](#partie-1--servicenow-vers-agent-webhook)
-5. [Partie 2 : Agent vers ServiceNow (API)](#partie-2--agent-vers-servicenow-api)
-6. [Partie 3 : Configuration des credentials](#partie-3--configuration-des-credentials)
-7. [Partie 4 : Modification de l'agent](#partie-4--modification-de-lagent)
-8. [Tests de bout en bout](#tests-de-bout-en-bout)
-9. [Sécurité et bonnes pratiques](#sécurité-et-bonnes-pratiques)
-10. [Dépannage](#dépannage)
-11. [Prochaines étapes](#prochaines-étapes)
+4. [Partie 1 : Déployer l'infrastructure CDK](#partie-1--déployer-linfrastructure-cdk)
+5. [Partie 2 : Configurer AgentCore Gateway](#partie-2--configurer-agentcore-gateway)
+6. [Partie 3 : Connecter l'agent au Gateway](#partie-3--connecter-lagent-au-gateway)
+7. [Partie 4 : Configuration ServiceNow](#partie-4--configuration-servicenow)
+8. [Tests et diagnostic](#tests-et-diagnostic)
+9. [Pièges courants et solutions](#pièges-courants-et-solutions)
+10. [Prochaines étapes](#prochaines-étapes)
 
 ---
 
 ## Introduction
 
-Dans l'[Article 2](article-02-gateway.md), nous avons exposé notre agent via une API REST. Maintenant, nous allons établir une **connexion réelle et bidirectionnelle** avec ServiceNow :
+Dans l'[Article 2](article-02-gateway.md), nous avons déployé l'infrastructure de base. Maintenant, nous allons établir une **connexion bidirectionnelle réelle** avec ServiceNow via **AgentCore Gateway**.
 
-- ✅ **ServiceNow → Agent** : ServiceNow déclenche automatiquement notre agent via webhook
-- ✅ **Agent → ServiceNow** : L'agent met à jour les tickets directement dans ServiceNow
-- ✅ **Credentials sécurisés** : Utilisation d'AWS Secrets Manager
-- ✅ **Flux complet** : Création de ticket → Analyse automatique → Mise à jour
+> **Avertissement** : Cette intégration comporte plusieurs pièges subtils. Cet article est basé sur une implémentation réelle et documente les erreurs que vous risquez de rencontrer.
 
 ### Ce que vous allez construire
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         FLUX BIDIRECTIONNEL                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│   ┌──────────────┐         ┌──────────────┐         ┌──────────────┐        │
-│   │  ServiceNow  │────────▶│    Agent     │────────▶│  ServiceNow  │        │
-│   │              │  HTTP   │   AgentCore  │   API   │              │        │
-│   │ (Nouveau     │  POST   │              │  REST   │ (Mise à jour │        │
-│   │  ticket)     │         │  (Analyse)   │         │  ticket)     │        │
-│   └──────────────┘         └──────────────┘         └──────────────┘        │
-│         │                         │                        ▲                │
-│         │    Business Rule        │    Work Notes          │                │
-│         └─────────────────────────┼────────────────────────┘                │
-│                                   │                                         │
-│                            AWS Secrets                                      │
-│                             Manager                                         │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                    ARCHITECTURE BIDIRECTIONNELLE RÉELLE                          │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  ┌────────────┐      ┌────────────┐     ┌────────────────┐     ┌──────────────┐  │
+│  │ ServiceNow │───▶ │API Gateway │────▶│ Webhook Lambda │────▶│  AgentCore   │  │
+│  │  (ticket)  │      │  + API Key │     │                │     │   Runtime    │  │
+│  └────────────┘      └────────────┘     └────────────────┘     └──────┬───────┘  │
+│        ▲                                                             │          │
+│        │                                                             ▼          │
+│        │            ┌────────────┐     ┌────────────────┐     ┌──────────────┐  │
+│        │            │ ServiceNow │◀────│  ServiceNow    │◀────│  AgentCore   │  │
+│        └────────────│   (mise à  │     │  API Lambda    │     │   Gateway    │  │
+│                     │   jour)    │     │                │     │  (MCP/OAuth) │  │
+│                     └────────────┘     └────────────────┘     └──────────────┘  │
+│                                               │                                  │
+│                                               ▼                                  │
+│                                        ┌────────────┐                           │
+│                                        │  Secrets   │                           │
+│                                        │  Manager   │                           │
+│                                        └────────────┘                           │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Pourquoi AgentCore Gateway ?
+
+L'agent AgentCore Runtime ne peut pas appeler directement des API externes. Il faut passer par **AgentCore Gateway** qui :
+- Expose des fonctions Lambda comme des **outils MCP** (Model Context Protocol)
+- Gère l'authentification OAuth via **Cognito**
+- Permet à l'agent d'appeler des services externes de manière sécurisée
+
 ### Temps estimé
-⏱️ **45-60 minutes** pour compléter ce tutoriel.
+⏱️ **60-90 minutes** - Comptez plus si c'est votre première fois avec AgentCore Gateway.
 
 ---
 
-## Architecture bidirectionnelle
+## Architecture réelle
 
-### Composants
+### Composants déployés
 
-| Direction | Source | Destination | Mécanisme |
-|-----------|--------|-------------|-----------|
-| **Entrée** | ServiceNow | Agent | Business Rule → REST Message → API Gateway → Lambda → AgentCore |
-| **Sortie** | Agent | ServiceNow | Tool `update_servicenow_ticket` → ServiceNow REST API |
+| Composant | Rôle | Service AWS |
+|-----------|------|-------------|
+| **Webhook Lambda** | Reçoit les tickets de ServiceNow | Lambda |
+| **ServiceNow API Lambda** | Exécute les opérations ServiceNow | Lambda |
+| **AgentCore Gateway** | Expose la Lambda comme outils MCP | Bedrock AgentCore |
+| **Cognito User Pool** | Authentification OAuth M2M | Cognito |
+| **Secrets Manager** | Stocke les credentials ServiceNow | Secrets Manager |
 
-### Flux détaillé
+### Flux de données
 
-1. **Déclencheur** : Un nouveau ticket est créé dans ServiceNow
-2. **Business Rule** : Déclenche automatiquement à la création
-3. **REST Message** : Envoie les données du ticket à notre API Gateway
-4. **Lambda** : Reçoit le webhook, invoque l'agent AgentCore
-5. **Agent** : Analyse le ticket, recherche dans la KB
-6. **Tool ServiceNow** : Met à jour le ticket avec les work notes
-7. **ServiceNow** : Affiche l'analyse de l'agent dans le ticket
+**Entrée (ServiceNow → Agent)** :
+1. Ticket créé dans ServiceNow
+2. Business Rule déclenche webhook HTTP
+3. API Gateway reçoit avec API Key
+4. Webhook Lambda invoque AgentCore Runtime
+5. Agent analyse le ticket
+
+**Sortie (Agent → ServiceNow)** :
+1. Agent appelle outil `update_servicenow_ticket`
+2. Requête HTTP JSON-RPC vers AgentCore Gateway
+3. Gateway authentifie via token Cognito
+4. Gateway invoque ServiceNow API Lambda
+5. Lambda met à jour le ticket via API ServiceNow
 
 ---
 
 ## Prérequis
 
 ### Depuis les articles précédents
-
-- ✅ Agent déployé (Article 1)
-- ✅ Infrastructure webhook déployée (Article 2)
-- ✅ API Gateway fonctionnel avec API Key
+- ✅ Agent déployé sur AgentCore Runtime (Article 1)
+- ✅ AWS CLI configuré avec les bonnes permissions
 
 ### Nouveaux prérequis
 
-1. **Instance ServiceNow**
-   - Instance de développement (PDI) : [developer.servicenow.com](https://developer.servicenow.com/)
-   - Ou instance de production avec accès admin
+1. **Instance ServiceNow** avec accès admin
+   - PDI gratuite : [developer.servicenow.com](https://developer.servicenow.com/)
 
-2. **Utilisateur ServiceNow avec permissions API**
-   - Rôle `rest_api_explorer` ou équivalent
-   - Accès à la table `incident`
+2. **Node.js 18+** pour le CDK
+   ```bash
+   node --version  # >= 18.0.0
+   ```
 
-3. **Credentials ServiceNow**
-   - URL de l'instance (ex: `https://devXXXXX.service-now.com`)
-   - Username et password (ou OAuth token)
+3. **AWS CDK installé**
+   ```bash
+   npm install -g aws-cdk
+   cdk --version
+   ```
 
 ---
 
-## Partie 1 : ServiceNow vers Agent (Webhook)
+## Partie 1 : Déployer l'infrastructure CDK
 
-### 1.1 Créer un REST Message dans ServiceNow
+### 1.1 Installer les dépendances
 
-1. **Naviguer vers** : System Web Services → Outbound → REST Message
-2. **Cliquer sur** : New
-3. **Remplir** :
+```bash
+cd infrastructure/cdk
+npm install
+```
+
+### 1.2 Bootstrap CDK (première fois uniquement)
+
+```bash
+cdk bootstrap aws://ACCOUNT_ID/eu-central-1
+```
+
+### 1.3 Déployer le stack
+
+```bash
+npm run cdk deploy
+```
+
+> **Note** : Le déploiement prend environ 5-10 minutes. Notez les **Outputs** affichés à la fin.
+
+### 1.4 Outputs importants à noter
+
+```
+ServiceNowWebhookStack.WebhookURL = https://xxx.execute-api.eu-central-1.amazonaws.com/prod/webhook/servicenow
+ServiceNowWebhookStack.ServiceNowApiLambdaArn = arn:aws:lambda:eu-central-1:xxx:function:ServiceNowApiHandler
+ServiceNowWebhookStack.CognitoUserPoolId = eu-central-1_XXXXXXX
+ServiceNowWebhookStack.CognitoAppClientId = xxxxxxxxxxxxxxxxxxxx
+ServiceNowWebhookStack.CognitoTokenEndpoint = https://agentcore-gateway-xxx.auth.eu-central-1.amazoncognito.com/oauth2/token
+ServiceNowWebhookStack.GatewayRoleArn = arn:aws:iam::xxx:role/AgentCoreGatewayServiceNowRole
+```
+
+### 1.5 Configurer les credentials ServiceNow
+
+```bash
+aws secretsmanager update-secret \
+  --secret-id servicenow/credentials \
+  --secret-string '{
+    "instance_url": "https://YOUR_INSTANCE.service-now.com",
+    "username": "YOUR_USERNAME",
+    "password": "YOUR_PASSWORD"
+  }'
+```
+
+---
+
+## Partie 2 : Configurer AgentCore Gateway
+
+### 2.1 Exécuter le script de setup
+
+```bash
+python scripts/setup_gateway.py \
+  --lambda-arn <ServiceNowApiLambdaArn> \
+  --role-arn <GatewayRoleArn> \
+  --user-pool-id <CognitoUserPoolId> \
+  --client-id <CognitoAppClientId> \
+  --region eu-central-1
+```
+
+Le script crée :
+- Un Gateway MCP avec authentification OAuth
+- Un target Lambda avec 3 outils définis
+- Un fichier `gateway_config.json` avec la configuration
+
+### 2.2 Récupérer le Client Secret Cognito
+
+> **Important** : Le client secret n'est PAS dans les outputs CDK. Vous devez le récupérer manuellement.
+
+```bash
+aws cognito-idp describe-user-pool-client \
+  --user-pool-id <CognitoUserPoolId> \
+  --client-id <CognitoAppClientId> \
+  --query 'UserPoolClient.ClientSecret' \
+  --output text
+```
+
+**Notez ce secret** - vous en aurez besoin pour lancer l'agent.
+
+### 2.3 Vérifier la configuration Gateway
+
+Le fichier `gateway_config.json` devrait contenir :
+
+```json
+{
+  "gateway_url": "https://xxx.gateway.bedrock-agentcore.eu-central-1.amazonaws.com/mcp",
+  "gateway_id": "xxx",
+  "target_name": "servicenow-tools",
+  "tools": [
+    "update_servicenow_ticket",
+    "create_servicenow_comment",
+    "resolve_servicenow_ticket"
+  ],
+  "oauth": {
+    "token_endpoint": "https://agentcore-gateway-xxx.auth.eu-central-1.amazoncognito.com/oauth2/token",
+    "scope": "agentcore-gateway/tools.invoke"
+  }
+}
+```
+
+---
+
+## Partie 3 : Connecter l'agent au Gateway
+
+### 3.1 Variables d'environnement requises
+
+L'agent a besoin de **4 variables d'environnement** pour se connecter au Gateway :
+
+| Variable | Description | Exemple |
+|----------|-------------|---------|
+| `AGENTCORE_GATEWAY_URL` | URL du Gateway MCP | `https://xxx.gateway.bedrock-agentcore.eu-central-1.amazonaws.com/mcp` |
+| `COGNITO_TOKEN_ENDPOINT` | URL pour obtenir le token | `https://agentcore-gateway-xxx.auth.eu-central-1.amazoncognito.com/oauth2/token` |
+| `COGNITO_CLIENT_ID` | ID du client Cognito | `rj66pt7uiro8o62lth2s45km8` |
+| `COGNITO_CLIENT_SECRET` | Secret du client (récupéré en 2.2) | `193vd3ggmv3ptb544f76q0qv38...` |
+
+### 3.2 Lancer l'agent avec les variables
+
+```bash
+agentcore launch \
+  --env "AGENTCORE_GATEWAY_URL=https://xxx.gateway.bedrock-agentcore.eu-central-1.amazonaws.com/mcp" \
+  --env "COGNITO_TOKEN_ENDPOINT=https://agentcore-gateway-xxx.auth.eu-central-1.amazoncognito.com/oauth2/token" \
+  --env "COGNITO_CLIENT_ID=xxx" \
+  --env "COGNITO_CLIENT_SECRET=xxx"
+```
+
+> **ATTENTION - Piège fréquent** : Vérifiez qu'il n'y a pas d'espace dans les URLs. Une erreur courante est un espace dans `eu-central-1` copié depuis un terminal avec retour à la ligne.
+
+❌ **Mauvais** : `eu-central-  1` (espace avant le 1)
+✅ **Bon** : `eu-central-1`
+
+---
+
+## Partie 4 : Configuration ServiceNow
+
+### 4.1 Créer un REST Message
+
+1. **System Web Services → Outbound → REST Message**
+2. **New** avec :
    - **Name** : `AWS AgentCore Webhook`
-   - **Endpoint** : `https://YOUR_API_GATEWAY_URL/prod/webhook/servicenow`
-   - **Authentication** : `No authentication` (on utilise API Key dans le header)
+   - **Endpoint** : L'URL du webhook (output `WebhookURL`)
 
-4. **Sauvegarder**
+### 4.2 Ajouter la méthode POST
 
-### 1.2 Ajouter une HTTP Method
-
-1. Dans le REST Message créé, aller à l'onglet **HTTP Methods**
-2. **Cliquer sur** : New
-3. **Remplir** :
+1. Onglet **HTTP Methods** → **New**
+2. Configuration :
    - **Name** : `POST Incident`
    - **HTTP method** : `POST`
-   - **Endpoint** : Laisser vide (hérite du parent)
 
-4. **HTTP Headers** : Ajouter les headers suivants :
+3. **HTTP Headers** :
 
 | Name | Value |
 |------|-------|
 | `Content-Type` | `application/json` |
-| `x-api-key` | `YOUR_API_KEY` |
+| `x-api-key` | Votre API Key (voir outputs CDK) |
 
-5. **HTTP Query Parameters** : Aucun
-
-6. **Content** (Request Body) :
+4. **Content** :
 ```json
 {
     "number": "${number}",
     "short_description": "${short_description}",
     "description": "${description}",
-    "urgency": "${urgency}",
-    "impact": "${impact}",
     "priority": "${priority}",
     "category": "${category}",
-    "subcategory": "${subcategory}",
-    "assignment_group": "${assignment_group}",
-    "caller_id": "${caller_id}",
-    "sys_id": "${sys_id}",
-    "sys_created_on": "${sys_created_on}"
+    "sys_id": "${sys_id}"
 }
 ```
 
-7. **Variable Substitutions** : Les variables `${...}` seront substituées automatiquement
+### 4.3 Créer la Business Rule
 
-8. **Sauvegarder**
-
-### 1.3 Créer une Business Rule
-
-1. **Naviguer vers** : System Definition → Business Rules
-2. **Cliquer sur** : New
-3. **Remplir** :
-   - **Name** : `Trigger AWS Agent on Incident Create`
+1. **System Definition → Business Rules** → **New**
+2. Configuration :
+   - **Name** : `Trigger AWS Agent`
    - **Table** : `Incident [incident]`
-   - **Active** : Checked
-   - **Advanced** : Checked
-
-4. **When to run** :
    - **When** : `after`
-   - **Insert** : Checked
-   - **Update** : Unchecked (optionnel : cocher si vous voulez aussi sur les mises à jour)
+   - **Insert** : ✅
+   - **Advanced** : ✅
 
-5. **Filter Conditions** (optionnel) :
-   - Par exemple : `Priority is 1 - Critical` pour ne traiter que les tickets critiques
-
-6. **Script** :
+3. **Script** :
 ```javascript
-(function executeRule(current, previous /*null when async*/) {
+(function executeRule(current, previous) {
     try {
-        // Créer le REST Message
         var r = new sn_ws.RESTMessageV2('AWS AgentCore Webhook', 'POST Incident');
 
-        // Substituer les variables
         r.setStringParameterNoEscape('number', current.getValue('number'));
         r.setStringParameterNoEscape('short_description', current.getValue('short_description'));
         r.setStringParameterNoEscape('description', current.getValue('description'));
-        r.setStringParameterNoEscape('urgency', current.getValue('urgency'));
-        r.setStringParameterNoEscape('impact', current.getValue('impact'));
         r.setStringParameterNoEscape('priority', current.getValue('priority'));
         r.setStringParameterNoEscape('category', current.getValue('category'));
-        r.setStringParameterNoEscape('subcategory', current.getValue('subcategory'));
-        r.setStringParameterNoEscape('assignment_group', current.getValue('assignment_group'));
-        r.setStringParameterNoEscape('caller_id', current.getValue('caller_id'));
         r.setStringParameterNoEscape('sys_id', current.getValue('sys_id'));
-        r.setStringParameterNoEscape('sys_created_on', current.getValue('sys_created_on'));
 
-        // Exécuter la requête
         var response = r.execute();
-        var responseBody = response.getBody();
-        var httpStatus = response.getStatusCode();
-
-        // Logger la réponse
-        gs.info('AWS Agent Response [' + httpStatus + ']: ' + responseBody);
-
+        gs.info('AWS Agent [' + response.getStatusCode() + ']: ' + response.getBody());
     } catch (ex) {
-        gs.error('Error calling AWS Agent: ' + ex.getMessage());
+        gs.error('AWS Agent Error: ' + ex.getMessage());
     }
-
 })(current, previous);
 ```
 
-7. **Sauvegarder**
-
-### 1.4 Tester le webhook
-
-1. **Créer un incident de test** dans ServiceNow
-2. **Vérifier les logs** : System Logs → System Log → All
-3. **Chercher** : `AWS Agent Response`
-
 ---
 
-## Partie 2 : Agent vers ServiceNow (API)
+## Tests et diagnostic
 
-### 2.1 Client ServiceNow
+### Script de diagnostic
 
-Le client ServiceNow (`src/servicenow/client.py`) permet à l'agent de mettre à jour les tickets.
-
-**Méthodes principales :**
-
-```python
-class ServiceNowClient:
-    def get_incident(self, number: str) -> Dict[str, Any]:
-        """Récupère un incident par numéro"""
-
-    def update_incident(self, sys_id: str, updates: Dict) -> Dict[str, Any]:
-        """Met à jour un incident"""
-
-    def add_work_notes(self, number: str, notes: str, state: str = None) -> Dict:
-        """Ajoute des work notes et change optionnellement l'état"""
-
-    def resolve_incident(self, number: str, notes: str) -> Dict:
-        """Marque un incident comme résolu"""
-```
-
-### 2.2 Configuration
-
-Le fichier `src/servicenow/config.py` gère la configuration :
-
-```python
-@dataclass
-class ServiceNowConfig:
-    instance_url: str          # https://devXXXXX.service-now.com
-    username: Optional[str]    # Basic auth
-    password: Optional[str]    # Basic auth
-    oauth_token: Optional[str] # OAuth alternative
-```
-
----
-
-## Partie 3 : Configuration des credentials
-
-### 3.1 Créer un secret dans AWS Secrets Manager
+Un script de test est fourni pour valider chaque composant :
 
 ```bash
-aws secretsmanager create-secret \
-    --name servicenow/credentials \
-    --description "ServiceNow API credentials for AgentCore" \
-    --secret-string '{
-        "instance_url": "https://YOUR_INSTANCE.service-now.com",
-        "username": "YOUR_USERNAME",
-        "password": "YOUR_PASSWORD"
-    }'
+# Définir les variables
+export AGENTCORE_GATEWAY_URL="https://xxx.gateway.bedrock-agentcore.eu-central-1.amazonaws.com/mcp"
+export COGNITO_TOKEN_ENDPOINT="https://agentcore-gateway-xxx.auth.eu-central-1.amazoncognito.com/oauth2/token"
+export COGNITO_CLIENT_ID="xxx"
+export COGNITO_CLIENT_SECRET="xxx"
+
+# Lancer les tests
+python scripts/test_gateway_integration.py
 ```
 
-### 3.2 Mettre à jour le secret (si déjà existant)
+### Test 1 : Token Cognito
 
 ```bash
-aws secretsmanager update-secret \
-    --secret-id servicenow/credentials \
-    --secret-string '{
-        "instance_url": "https://YOUR_INSTANCE.service-now.com",
-        "username": "YOUR_USERNAME",
-        "password": "YOUR_PASSWORD"
-    }'
+python scripts/test_gateway_integration.py --test token
 ```
 
-### 3.3 Vérifier le secret
+**Résultat attendu** :
+```
+[OK] Token acquired successfully (expires in 3600s)
+```
+
+**Si échec** : Vérifiez `COGNITO_CLIENT_SECRET` et `COGNITO_TOKEN_ENDPOINT`.
+
+### Test 2 : Liste des outils Gateway
 
 ```bash
-aws secretsmanager get-secret-value \
-    --secret-id servicenow/credentials \
-    --query 'SecretString' \
-    --output text | jq .
+python scripts/test_gateway_integration.py --test list
 ```
 
-### 3.4 Configurer les permissions IAM
+**Résultat attendu** :
+```
+Found 4 tools:
+  - x_amz_bedrock_agentcore_search
+  - servicenow-tools___create_servicenow_comment
+  - servicenow-tools___resolve_servicenow_ticket
+  - servicenow-tools___update_servicenow_ticket
+[OK] Successfully listed 4 tools
+```
 
-L'agent doit avoir la permission de lire le secret. Ajoutez cette politique au rôle d'exécution :
+### Test 3 : Appel d'outil
 
+```bash
+python scripts/test_gateway_integration.py --test call --ticket INC0010466
+```
+
+**Résultat attendu** :
 ```json
 {
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "secretsmanager:GetSecretValue"
-            ],
-            "Resource": "arn:aws:secretsmanager:eu-central-1:ACCOUNT_ID:secret:servicenow/*"
-        }
-    ]
+  "success": true,
+  "ticket_number": "INC0010466",
+  "message": "Ticket updated successfully"
 }
 ```
 
 ---
 
-## Partie 4 : Modification de l'agent
+## Pièges courants et solutions
 
-### 4.1 Modifier l'outil `update_servicenow_ticket`
+### Piège 1 : Espace dans les URLs des variables d'environnement
 
-Dans `src/agent/agent_level_one_triage.py`, remplacez l'outil simulé par un vrai appel API :
+**Symptôme** : Erreur de connexion au token endpoint ou au gateway.
 
-```python
-import os
-import boto3
-import json
+**Cause** : Copier-coller depuis un terminal avec retour à la ligne automatique.
 
-def get_servicenow_credentials():
-    """Récupère les credentials depuis Secrets Manager"""
-    client = boto3.client('secretsmanager')
-    response = client.get_secret_value(SecretId='servicenow/credentials')
-    return json.loads(response['SecretString'])
-
-@tool
-def update_servicenow_ticket(ticket_number: str, resolution_notes: str) -> str:
-    """
-    Update ServiceNow ticket with resolution notes.
-    Makes real API call to ServiceNow.
-    """
-    try:
-        # Récupérer les credentials
-        creds = get_servicenow_credentials()
-
-        # Créer le client ServiceNow
-        from servicenow.client import ServiceNowClient
-        from servicenow.config import ServiceNowConfig
-
-        config = ServiceNowConfig(
-            instance_url=creds['instance_url'],
-            username=creds['username'],
-            password=creds['password']
-        )
-        client = ServiceNowClient(config)
-
-        # Ajouter les work notes
-        result = client.add_work_notes(
-            number=ticket_number,
-            work_notes=f"[AI Agent Analysis]\n\n{resolution_notes}",
-            state="2"  # 2 = In Progress
-        )
-
-        return json.dumps({
-            "success": True,
-            "ticket_number": ticket_number,
-            "message": "Ticket updated in ServiceNow",
-            "state": "In Progress"
-        }, indent=2)
-
-    except Exception as e:
-        return json.dumps({
-            "success": False,
-            "error": str(e)
-        }, indent=2)
-```
-
-### 4.2 Redéployer l'agent
+**Solution** : Vérifiez chaque URL caractère par caractère.
 
 ```bash
-agentcore launch
+# Mauvais (espace caché)
+COGNITO_TOKEN_ENDPOINT=https://agentcore-gateway-xxx.auth.eu-central-  1.amazoncognito.com/oauth2/token
+
+# Bon
+COGNITO_TOKEN_ENDPOINT=https://agentcore-gateway-xxx.auth.eu-central-1.amazoncognito.com/oauth2/token
 ```
 
----
+### Piège 2 : Format de réponse MCP non parsé
 
-## Tests de bout en bout
+**Symptôme** : L'agent reçoit une réponse vide ou mal formatée du Gateway.
 
-### Test 1 : Créer un ticket dans ServiceNow
+**Cause** : Le protocole MCP encapsule les réponses dans une structure `content`.
 
-1. Allez dans ServiceNow → Incident → Create New
-2. Remplissez :
-   - **Short description** : `Cannot connect to VPN from home`
-   - **Description** : `User reports VPN connection timeout when working from home`
-   - **Category** : `Network`
-   - **Priority** : `3 - Moderate`
-3. Soumettez le ticket
+**Format réel de la réponse** :
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"success\":true,\"ticket_number\":\"INC001\"}"
+      }
+    ]
+  }
+}
+```
 
-### Test 2 : Vérifier le déclenchement
+**Solution** : Le parsing doit extraire `result.content[0].text` puis le parser en JSON.
 
-1. **Logs ServiceNow** : System Logs → System Log → All
-   - Cherchez `AWS Agent Response`
-   - Vérifiez le status HTTP 200
+### Piège 3 : Nom des outils avec préfixe target
 
-2. **Logs CloudWatch** :
-   ```bash
-   aws logs tail /aws/lambda/ServiceNowWebhookStack-WebhookHandler-xxx --follow
-   ```
+**Symptôme** : Erreur "tool not found" lors de l'appel.
 
-### Test 3 : Vérifier la mise à jour du ticket
+**Cause** : Les outils Gateway ont un préfixe `{target-name}___`.
 
-1. Retournez au ticket dans ServiceNow
-2. Vérifiez l'onglet **Activity** ou **Work Notes**
-3. Vous devriez voir les notes de l'agent avec :
-   - Résumé du problème
-   - Causes potentielles
-   - Étapes de résolution recommandées
-   - Articles KB pertinents
-
----
-
-## Sécurité et bonnes pratiques
-
-### 1. Ne jamais hardcoder les credentials
-
-❌ **Mauvais** :
+**Solution** : Utilisez le nom complet :
 ```python
-password = "my_secret_password"
+# Mauvais
+tool_name = "update_servicenow_ticket"
+
+# Bon
+tool_name = "servicenow-tools___update_servicenow_ticket"
 ```
 
-✅ **Bon** :
+### Piège 4 : Format de réponse Lambda
+
+**Symptôme** : Le Gateway retourne une erreur même si la Lambda s'exécute.
+
+**Cause** : AgentCore Gateway attend un format spécifique.
+
+**Format attendu par le Gateway** :
 ```python
-creds = get_servicenow_credentials()  # Depuis Secrets Manager
+return {
+    "statusCode": 200,
+    "body": json.dumps({"success": True, ...})
+}
 ```
 
-### 2. Valider les payloads webhook
-
+**Pas** :
 ```python
-def validate_payload(body: dict) -> bool:
-    required_fields = ['number', 'short_description']
-    return all(field in body for field in required_fields)
+return {"success": True, ...}  # Manque statusCode et body
 ```
 
-### 3. Limiter les permissions IAM
+### Piège 5 : Client Secret non récupéré
 
-- Principe du moindre privilège
-- Scoper les ressources spécifiquement
-- Utiliser des conditions si possible
+**Symptôme** : Erreur 401 lors de la demande de token.
 
-### 4. Monitorer les appels API
-
-- Activer CloudWatch Logs
-- Configurer des alertes sur les erreurs
-- Tracker les métriques (latence, taux d'erreur)
-
-### 5. Rate limiting
-
-ServiceNow a des limites d'API. Implémentez :
-- Retry avec backoff exponentiel
-- Queue pour les pics de charge
-- Cache pour les données statiques
-
----
-
-## Dépannage
-
-### Erreur : "SERVICENOW_INSTANCE_URL not found"
-
-**Cause** : Le secret n'existe pas ou est mal configuré.
+**Cause** : Le client secret n'est pas dans les outputs CDK.
 
 **Solution** :
 ```bash
-aws secretsmanager get-secret-value --secret-id servicenow/credentials
+aws cognito-idp describe-user-pool-client \
+  --user-pool-id <pool-id> \
+  --client-id <client-id> \
+  --query 'UserPoolClient.ClientSecret' \
+  --output text
 ```
 
-### Erreur : "401 Unauthorized" de ServiceNow
+### Piège 6 : Scope OAuth incorrect
 
-**Cause** : Credentials invalides.
+**Symptôme** : Token obtenu mais rejeté par le Gateway.
 
-**Solution** :
-1. Vérifiez username/password dans Secrets Manager
-2. Testez les credentials manuellement :
-   ```bash
-   curl -u "username:password" \
-     "https://YOUR_INSTANCE.service-now.com/api/now/table/incident?sysparm_limit=1"
-   ```
+**Cause** : Le scope demandé ne correspond pas à celui configuré.
 
-### Erreur : "Business Rule not firing"
+**Scope correct** : `agentcore-gateway/tools.invoke`
 
-**Cause** : La règle n'est pas active ou les conditions ne matchent pas.
+---
 
-**Solution** :
-1. Vérifiez que la règle est **Active**
-2. Vérifiez les conditions de filtre
-3. Testez avec un incident qui matche les conditions
+## Vérification finale
 
-### Erreur : "REST Message failed"
+Checklist avant de considérer l'intégration comme fonctionnelle :
 
-**Cause** : Configuration du REST Message incorrecte.
-
-**Solution** :
-1. Testez le REST Message manuellement dans ServiceNow
-2. Vérifiez l'API Key dans les headers
-3. Vérifiez l'URL de l'endpoint
+- [ ] CDK déployé avec succès
+- [ ] Credentials ServiceNow dans Secrets Manager
+- [ ] Gateway setup exécuté
+- [ ] Client secret Cognito récupéré
+- [ ] Test token : OK
+- [ ] Test list tools : OK (4 outils)
+- [ ] Test call tool : OK (ticket mis à jour)
+- [ ] Agent lancé avec les 4 variables d'environnement
+- [ ] Business Rule ServiceNow configurée
+- [ ] Test end-to-end : création ticket → mise à jour automatique
 
 ---
 
 ## Prochaines étapes
 
-Félicitations ! 🎉 Vous avez maintenant une intégration ServiceNow bidirectionnelle complète.
+Félicitations ! Vous avez maintenant une intégration ServiceNow bidirectionnelle fonctionnelle via AgentCore Gateway.
 
 Dans le **prochain article (Article 4)**, nous allons :
 
-🔜 **Remplacer la KB simulée** par AWS Bedrock Knowledge Bases
-🔜 **Implémenter la recherche sémantique** avec embeddings
-🔜 **Connecter à vos vrais documents** (PDF, Confluence, SharePoint)
-🔜 **Optimiser les réponses** avec RAG (Retrieval-Augmented Generation)
+- Remplacer la KB simulée par **AWS Bedrock Knowledge Bases**
+- Implémenter la **recherche sémantique** avec embeddings
+- Connecter à vos **vrais documents** (PDF, Confluence)
 
-**Branche Git :** `step-04-knowledge-base`
+**Branche Git** : `step-04-knowledge-base`
 
 ---
 
 ## Ressources
 
-### Documentation ServiceNow
-- [REST API Guide](https://developer.servicenow.com/dev.do#!/reference/api/tokyo/rest/)
-- [Business Rules](https://docs.servicenow.com/bundle/tokyo-application-development/page/script/business-rules/concept/c_BusinessRules.html)
-- [REST Message](https://docs.servicenow.com/bundle/tokyo-application-development/page/integrate/outbound-rest/concept/c_OutboundRESTMessage.html)
+### Scripts utiles
+- `scripts/setup_gateway.py` - Configuration du Gateway
+- `scripts/test_gateway_integration.py` - Tests de diagnostic
 
-### Documentation AWS
-- [Secrets Manager](https://docs.aws.amazon.com/secretsmanager/latest/userguide/)
-- [IAM Best Practices](https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html)
+### Fichiers de configuration
+- `gateway_config.json` - Configuration Gateway générée
+- `infrastructure/cdk/` - Infrastructure CDK
 
-### Code source
-- [Repository GitHub](https://github.com/votre-username/aws-agentcore-tutorial)
-- Branch : `step-03-servicenow-integration`
+### Documentation
+- [AgentCore Gateway - AWS Samples](https://github.com/awslabs/amazon-bedrock-agentcore-samples/tree/main/01-tutorials/02-AgentCore-gateway)
+- [MCP Protocol](https://modelcontextprotocol.io/)
+- [ServiceNow REST API](https://developer.servicenow.com/dev.do#!/reference/api/tokyo/rest/)
 
 ---
 
@@ -537,4 +534,4 @@ Dans le **prochain article (Article 4)**, nous allons :
 **Date :** Décembre 2025
 **Série :** Agent de Support Backoffice avec AWS AgentCore (3/5)
 
-*Cet article fait partie d'une série sur AWS AgentCore.*
+*Cet article est basé sur une implémentation réelle et documente les erreurs courantes rencontrées.*

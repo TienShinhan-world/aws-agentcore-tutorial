@@ -6,9 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a tutorial repository for building an intelligent backoffice support agent using AWS AgentCore. The project demonstrates progressive integration with ServiceNow, knowledge bases, observability, and identity management across 5 tutorial steps, each on separate Git branches.
 
-**Current Status**: Webhook-based ServiceNow integration - ServiceNow pushes ticket data to agent via API Gateway + Lambda
+**Current Status**: Full bidirectional ServiceNow integration with AgentCore Gateway
 
-**Architecture**: ServiceNow → API Gateway → Lambda → AgentCore Agent → ServiceNow API (update ticket)
+**Architecture**:
+- **Inbound**: ServiceNow → Business Rule → API Gateway → Lambda → AgentCore Agent
+- **Outbound**: Agent → AgentCore Gateway (MCP) → ServiceNow API Lambda → ServiceNow Table API
 
 ## Development Commands
 
@@ -189,71 +191,95 @@ Multi-stage Dockerfile using `uv` package manager:
 
 ### ServiceNow Integration (src/servicenow/)
 
-**Complete webhook-based ServiceNow integration**:
+**Complete bidirectional ServiceNow integration with AgentCore Gateway**:
 
 - `config.py` - Configuration management for ServiceNow credentials
   - Loads from environment variables or AWS Secrets Manager
-  - Supports basic auth (username/password) or OAuth token
-  - Provides URL builders for ServiceNow API endpoints
+  - Uses Basic Auth (username/password) authentication
+  - Provides URL builders for ServiceNow Table API endpoints
 
 - `client.py` - ServiceNow REST API client
   - `ServiceNowClient` class with methods for ticket operations
   - `get_incident()` - Fetch incident by number
   - `update_incident()` - Update incident with arbitrary fields
   - `add_work_notes()` - Add work notes and optionally change state
+  - `add_comment()` - Add customer-visible comments
   - `resolve_incident()` - Mark incident as resolved
   - Context manager support for automatic session cleanup
+  - Retry logic with exponential backoff
 
-- `webhook_handler.py` - AWS Lambda function for webhook endpoint
-  - Receives POST requests from ServiceNow via API Gateway
-  - Parses ticket payload (handles various ServiceNow webhook formats)
-  - Invokes agent with formatted prompt containing ticket data
-  - Returns HTTP 200 with agent analysis result
-  - Error handling with appropriate HTTP status codes
+- `lambda_handler.py` - AWS Lambda function for AgentCore Gateway tools
+  - Exposed via AgentCore Gateway as MCP tools
+  - `update_ticket` - Add work notes and change state
+  - `create_comment` - Add customer-visible comments
+  - `resolve_ticket` - Mark incident as resolved
+  - Credential loading from Secrets Manager
+
+- `business_rule.js` - ServiceNow Business Rule script
+  - Complete JavaScript for ServiceNow Business Rule
+  - Triggers on incident creation/update
+  - Sends webhook to AWS API Gateway
+  - Async execution to avoid blocking
 
 ### Infrastructure (infrastructure/cdk/)
 
-**AWS CDK stack for webhook infrastructure**:
+**AWS CDK stack for complete ServiceNow + Gateway infrastructure**:
 
 - `bin/app.ts` - CDK application entry point
 - `lib/servicenow-webhook-stack.ts` - Main infrastructure stack
   - **API Gateway**: REST API with `/webhook/servicenow` endpoint
-  - **Lambda**: Python function running webhook_handler
-  - **Secrets Manager**: Stores ServiceNow credentials
-  - **IAM Roles**: Lambda execution role with Bedrock and Secrets Manager permissions
+  - **Webhook Lambda**: Python function running webhook handler
+  - **ServiceNow API Lambda**: Lambda for Gateway tool operations
+  - **Secrets Manager**: Stores ServiceNow API credentials
+  - **Cognito User Pool**: OAuth authentication for Gateway
+  - **IAM Roles**:
+    - Webhook Lambda role with Bedrock AgentCore permissions
+    - ServiceNow API Lambda role with Secrets Manager access
+    - Gateway role for Lambda invocation
   - **CloudWatch**: Log groups for API Gateway and Lambda
 
 **Deployment outputs**:
 - `WebhookURL` - URL to configure in ServiceNow Business Rule
 - `LambdaFunctionName` - Name of webhook handler function
-- `SecretArn` - ARN of ServiceNow credentials secret
+- `ServiceNowApiLambdaArn` - ARN for Gateway tool configuration
+- `ServiceNowSecretArn` - ARN of ServiceNow credentials secret
+- `CognitoUserPoolId` - User Pool ID for Gateway OAuth
+- `CognitoAppClientId` - App Client ID for M2M auth
+- `GatewayRoleArn` - IAM Role ARN for Gateway
+- `GatewaySetupCommand` - Command to run setup_gateway.py
 
 ### Directory Structure
 
 ```
 src/
-├── agent/          # Agent implementations
-│   └── my_agent.py # Main agent with webhook-aware tools
-├── tools/          # Custom tools (ready for extensions)
-├── servicenow/     # ServiceNow integration (complete)
-│   ├── config.py   # Configuration management
-│   ├── client.py   # REST API client
-│   └── webhook_handler.py  # Lambda webhook handler
-└── utils/          # Shared utilities
+├── agent/                    # Agent implementations
+│   └── agent_level_one_triage.py  # Main agent with Gateway tools
+├── servicenow/               # ServiceNow integration (complete)
+│   ├── __init__.py           # Module exports
+│   ├── config.py             # Configuration management
+│   ├── client.py             # REST API client
+│   ├── lambda_handler.py     # Gateway tool Lambda handler
+│   └── business_rule.js      # ServiceNow Business Rule script
+├── webhook/                  # Webhook handler
+│   └── handler.py            # Inbound webhook Lambda
+├── tools/                    # Custom tools (ready for extensions)
+└── utils/                    # Shared utilities
 
-tests/              # Unit and integration tests (ready for tests)
+tests/                        # Unit and integration tests
 
-scripts/            # Utility scripts
-├── navigate.py     # Branch navigation helper
-└── test_webhook.sh # Webhook testing script
+scripts/                      # Utility scripts
+├── navigate.py               # Branch navigation helper
+├── setup_gateway.py          # AgentCore Gateway setup script
+├── test_webhook.sh           # Webhook testing script
+└── test_gateway_tools.sh     # Gateway tools testing (planned)
 
 docs/
-├── fr/             # French tutorial articles
-├── en/             # English tutorial articles
-└── WEBHOOK_SETUP.md # ServiceNow webhook configuration guide
+├── fr/                       # French tutorial articles
+├── en/                       # English tutorial articles
+└── WEBHOOK_SETUP.md          # ServiceNow webhook configuration guide
 
 infrastructure/
-└── cdk/            # AWS CDK infrastructure
+└── cdk/                      # AWS CDK infrastructure
     ├── bin/app.ts
     ├── lib/servicenow-webhook-stack.ts
     ├── package.json
@@ -325,20 +351,45 @@ When running locally or in Lambda, set these environment variables:
 SERVICENOW_INSTANCE_URL=https://YOUR_INSTANCE.service-now.com
 SERVICENOW_USERNAME=your_username
 SERVICENOW_PASSWORD=your_password
-# OR use OAuth:
-# SERVICENOW_OAUTH_TOKEN=your_oauth_token
 ```
 
-**For AWS deployment**, credentials are stored in Secrets Manager (secret: `servicenow/credentials`).
+**For AWS deployment**, credentials are stored in Secrets Manager (secret: `servicenow/credentials`):
 
-### ServiceNow Webhook Setup
+```json
+{
+  "instance_url": "https://YOUR_INSTANCE.service-now.com",
+  "username": "YOUR_USERNAME",
+  "password": "YOUR_PASSWORD"
+}
+```
 
-See `docs/WEBHOOK_SETUP.md` for complete instructions on:
-1. Deploying AWS infrastructure (API Gateway + Lambda)
-2. Configuring ServiceNow Business Rules to trigger webhook
-3. Creating REST Message in ServiceNow
-4. Testing the integration
-5. Troubleshooting common issues
+### AgentCore Gateway Setup
+
+After deploying CDK infrastructure:
+
+```bash
+# Run the Gateway setup script (command output by CDK)
+python scripts/setup_gateway.py \
+  --lambda-arn <ServiceNowApiLambdaArn> \
+  --role-arn <GatewayRoleArn> \
+  --user-pool-id <CognitoUserPoolId> \
+  --client-id <CognitoAppClientId> \
+  --region eu-central-1
+```
+
+This creates:
+- AgentCore Gateway endpoint with MCP protocol
+- Three Lambda-based tools: update_servicenow_ticket, create_servicenow_comment, resolve_servicenow_ticket
+- OAuth authentication via Cognito
+
+### ServiceNow Business Rule Setup
+
+1. Copy `src/servicenow/business_rule.js` to ServiceNow
+2. Create REST Message "AWS AgentCore Webhook" with POST method
+3. Configure API Key in ServiceNow System Property `aws.agentcore.api_key`
+4. Create Business Rule on `incident` table (after insert/update)
+
+See `docs/WEBHOOK_SETUP.md` for complete instructions.
 
 ## Agent Runtime Details
 
@@ -355,3 +406,4 @@ The agent uses **BedrockAgentCoreApp** which:
 3. Agent processes with system prompt and available tools
 4. Tools are called as needed by the LLM
 5. Final response text is returned to caller
+- Uniquement moi execute les commandes de déploiement npm run cdk deploy ou agentcore launch
